@@ -3,7 +3,7 @@ import {createRoot} from 'react-dom/client';
 import {BrainCircuit,Target,BookOpen,BarChart3,ArrowRight,CheckCircle2,Sparkles,MessageCircle,Send,RotateCcw} from 'lucide-react';
 import './style.css';
 
-const API='http://localhost:8000/api';
+const API=`${import.meta.env.VITE_API_URL || 'http://127.0.0.1:8000'}/api`;
 function App(){
  const [learner,setLearner]=useState(null),[name,setName]=useState(''),[dashboard,setDashboard]=useState(null),[topics,setTopics]=useState([]),[topic,setTopic]=useState(''),[quiz,setQuiz]=useState(null),[answers,setAnswers]=useState([]),[done,setDone]=useState(false),[score,setScore]=useState(null),[loading,setLoading]=useState(false),[profileLoading,setProfileLoading]=useState(false),[chatMessages,setChatMessages]=useState([]),[chatInput,setChatInput]=useState(''),[chatLoading,setChatLoading]=useState(false),[conversationId,setConversationId]=useState(null);
  const request=async(url,options)=>{const r=await fetch(url,options);const body=await r.json().catch(()=>({}));if(!r.ok)throw new Error(body.detail||'The service is unavailable.');return body};
