@@ -1,6 +1,7 @@
 """Provider abstraction and validated local question generation for AI LearnMate."""
 import hashlib
 import json
+import logging
 import re
 from abc import ABC, abstractmethod
 from typing import Any
@@ -8,6 +9,8 @@ from typing import Any
 import httpx
 
 from .config import settings
+
+logger = logging.getLogger(__name__)
 
 SUBJECTS = [
     "C", "C++", "Java", "Python", "Data Structures", "Algorithms", "DBMS",
@@ -358,7 +361,7 @@ class GeminiProvider(AIProvider):
 
     def __init__(self, api_key: str | None = None, model: str | None = None, base_url: str | None = None):
         self.api_key = api_key if api_key is not None else settings.gemini_api_key
-        self.model = model or settings.gemini_model or "gemini-2.5-flash"
+        self.model = model or settings.gemini_model or "gemini-3.6-flash"
         self.base_url = (base_url or settings.gemini_base_url).rstrip("/")
 
     def _url(self):
@@ -366,8 +369,28 @@ class GeminiProvider(AIProvider):
 
     @staticmethod
     def _response_text(response):
-        parts = response.get("candidates", [{}])[0].get("content", {}).get("parts", [])
-        return "".join(str(part.get("text", "")) for part in parts).strip()
+        for candidate in response.get("candidates", []):
+            parts = candidate.get("content", {}).get("parts", [])
+            text = "".join(str(part.get("text", "")) for part in parts if part.get("text"))
+            if text.strip():
+                return text.strip()
+        prompt_feedback = response.get("promptFeedback", {})
+        block_reason = prompt_feedback.get("blockReason") or "no text candidate returned"
+        raise ValueError(f"Gemini returned no text candidate: {block_reason}")
+
+    def _log_failure(self, operation, error):
+        response = getattr(error, "response", None)
+        status = getattr(response, "status_code", None)
+        message = "Gemini request failed"
+        if response is not None:
+            try:
+                message = str(response.json().get("error", {}).get("message") or message)
+            except (ValueError, TypeError):
+                pass
+        if self.api_key:
+            message = message.replace(self.api_key, "[REDACTED]")
+        message = re.sub(r"(?i)(key|token|api[_ -]?key)\s*[=:]\s*[^\s,;]+", r"\1=[REDACTED]", message)
+        logger.warning("Gemini %s failed status=%s type=%s message=%s", operation, status, type(error).__name__, message)
 
     async def _generate(self, prompt, response_schema=None, json_mode=True):
         generation_config = {"temperature": 0.65}
@@ -380,10 +403,18 @@ class GeminiProvider(AIProvider):
             "systemInstruction": {"parts": [{"text": "You are a careful educational tutor. Return valid JSON when requested and never invent an answer key."}]},
             "generationConfig": generation_config,
         }
-        async with httpx.AsyncClient(timeout=30) as client:
-            response = await client.post(self._url(), json=payload)
-            response.raise_for_status()
-            return self._response_text(response.json())
+        for attempt in range(2):
+            try:
+                async with httpx.AsyncClient(timeout=30) as client:
+                    response = await client.post(self._url(), json=payload)
+                response.raise_for_status()
+                return self._response_text(response.json())
+            except (httpx.HTTPStatusError, httpx.RequestError) as error:
+                status = getattr(getattr(error, "response", None), "status_code", None)
+                retryable = status is None or status == 429 or status >= 500
+                if attempt == 0 and retryable:
+                    continue
+                raise
 
     async def generate_questions(self, subject, topic, subtopic, difficulty, count, context):
         if not self.api_key:
@@ -412,7 +443,8 @@ Use different concepts and appropriate types such as conceptual, code-output, de
                 if validated:
                     result.append(validated)
             return result
-        except (httpx.HTTPError, json.JSONDecodeError, KeyError, TypeError, ValueError):
+        except Exception as error:
+            self._log_failure("MCQ generation", error)
             return None
 
     async def chat(self, message, context):
@@ -421,7 +453,8 @@ Use different concepts and appropriate types such as conceptual, code-output, de
         prompt = json.dumps({"learner_context": context, "message": message}, ensure_ascii=True)
         try:
             return await self._generate("Respond as a patient educational tutor. Use the learner context, continue the current topic, explain uncertainty, and do not reveal quiz answers before an attempt. Return plain text, not JSON.\n" + prompt, None, False)
-        except (httpx.HTTPError, KeyError, TypeError, ValueError):
+        except Exception as error:
+            self._log_failure("chat", error)
             return None
 
 
