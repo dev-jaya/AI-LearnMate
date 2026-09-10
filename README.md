@@ -1,24 +1,39 @@
-# AI LearnMate — AI Learning Platform with Personalized Training and Automated MCQ Generation
+# AI LearnMate — SIH26101 Smart Education
 
-A complete hackathon-ready MVP implementing the SIH proposal: learner profiling, diagnostic assessment, adaptive recommendations, topic-wise MCQ generation, scoring, progress analytics, and an optional LLM integration.
+AI LearnMate is an AI-enabled learning platform for personalized training, competency-gap practice and automated assessment. It is designed around the SIH26101 MoSPI Smart Education problem statement: personalized learning, competency development, quizzes/MCQs from learning material, and an iGOT Karmayogi-oriented learning flow.
 
 ## Core workflow
-1. Learner selects a subject/topic and takes a diagnostic quiz.
-2. The adaptive engine estimates topic mastery.
-3. Weak topics receive higher practice priority.
-4. MCQs are generated from the selected topic and difficulty.
-5. Quiz results update the learner model.
-6. Dashboard shows mastery, weak areas, streak/progress, and recommendations.
+1. Learner creates a lightweight demo profile.
+2. Adaptive assessments estimate topic mastery and expose weak areas.
+3. Learner uploads a learning material or selects a public iGOT Karmayogi resource URL.
+4. The backend extracts readable text and stores the material against the learner.
+5. Gemini generates validated MCQs grounded in the selected material.
+6. Question fingerprints and similarity checks prevent repeats for the learner.
+7. Quiz results update mastery and recommendations.
+8. The Gemini tutor can continue the conversation with learner context and selected material context.
+
+## SIH26101 feature coverage
+- AI-enabled personalized learning platform
+- Competency-gap detection from assessment history
+- Personalized learning path and next-best-action recommendations
+- Gemini-powered normal tutor conversation
+- Dynamic, non-repeating MCQ generation
+- Uploaded PDF/DOCX/PPTX/TXT/Markdown/CSV/JSON/HTML material ingestion
+- Material-grounded MCQ generation from uploaded content
+- Public iGOT Karmayogi resource import for demo/integration workflows
+- Link to the official iGOT Karmayogi platform
+- Persistent learner, quiz, question-history and conversation records
+
+### iGOT integration note
+The current demo implements a safe **public-resource connector**: users can paste a public iGOT Karmayogi resource URL and AI LearnMate imports readable public content for learning/assessment. Official iGOT pages document authenticated government-user access and role-based portals; authenticated production API/SSO integration would require official credentials, API specifications and authorization from the iGOT/Karmayogi Bharat ecosystem. AI LearnMate does not claim an authenticated government API integration without those prerequisites.
 
 ## Technology
 - Frontend: React + Vite
 - Backend: Python + FastAPI
 - Database: SQLite by default; PostgreSQL can be substituted later
-- AI layer: Gemini-primary provider abstraction with optional Ollama/Hugging Face/OpenAI-compatible providers and validated local fallback generation
-- Analytics: mastery scoring and recommendation engine
-- Tutor: persistent multi-turn conversations with adaptive chat-to-quiz transitions
-
-React's current documentation recommends modern React app setups rather than Create React App, and FastAPI provides automatic API documentation and a production-oriented Python API framework. See the official docs linked in `docs/references.md`.
+- AI: Gemini-primary provider with validated local fallback
+- Material extraction: pypdf plus built-in DOCX/PPTX/XML and text extraction
+- Analytics: mastery scoring, weak-topic detection and recommendations
 
 ## Run locally
 ### Backend
@@ -36,37 +51,33 @@ API: http://localhost:8000
 Swagger: http://localhost:8000/docs
 
 ### Frontend
-Requires Node.js.
 ```bash
 cd frontend
 npm install
 npm run dev
 ```
-Open the URL shown by Vite, normally http://localhost:5173.
+Open the Vite URL, normally http://localhost:5173.
 
-## Optional LLM
-Copy `backend/.env.example` to `backend/.env` and set:
-- `GEMINI_API_KEY` to make Gemini the primary generator and tutor
-- `GEMINI_MODEL` (default `gemini-2.0-flash`)
-- `GEMINI_BASE_URL` (default Google Gemini REST API URL)
-- `AI_PROVIDER=fallback`, `ollama`, or `huggingface`
-- `OLLAMA_BASE_URL` and `OLLAMA_MODEL` for local Ollama
-- `HF_BASE_URL`, `HF_API_KEY`, and `HF_MODEL` for a Hugging Face-compatible endpoint
-- `LLM_BASE_URL`
-- `LLM_API_KEY`
-- `LLM_MODEL`
+## Environment
+Backend `.env`:
+- `GEMINI_API_KEY` — backend-only Gemini secret
+- `GEMINI_MODEL=gemini-3.6-flash`
+- `GEMINI_BASE_URL=https://generativelanguage.googleapis.com/v1beta`
 
-When `GEMINI_API_KEY` is configured, Gemini is selected first for both MCQ generation and tutor chat. The backend validates Gemini output and retries once before using the fallback provider. If the key is missing or Gemini is unavailable, the application remains usable with its local generator. The subject catalog is stored in SQLite and currently covers C, C++, Java, Python, Data Structures, Algorithms, DBMS, Operating Systems, Computer Networks, Computer Organization, Software Engineering, Web Development, Artificial Intelligence, Machine Learning, Cybersecurity, and Cloud Computing.
+Frontend production:
+- `VITE_API_URL=https://ai-learnmate-backend.onrender.com`
 
-## Dynamic questions and tutor
-`GET /api/topics` returns the SQLite-backed subject catalog. `POST /api/quiz` and `POST /api/assessment/start` accept `subject`, `topic`, `subtopic`, `difficulty`, and `count`. Generated questions are validated, fingerprinted, stored, linked through `quiz_questions`, and excluded from later quizzes for the same learner. The service attempts a larger candidate pool before returning the requested count.
+Never put `GEMINI_API_KEY` in frontend code or Vite environment variables.
 
-`POST /api/chat` accepts a learner ID, message, topic, and optional conversation ID. Messages and tutor replies are stored in SQLite. Requests containing `test me`, `MCQ`, or `ask me` transition into a persisted adaptive quiz.
+## Material APIs
+- `POST /api/materials/upload` — upload supported learning material
+- `POST /api/materials/igot?learner_id=...&url=...` — import a public official iGOT URL
+- `GET /api/materials/{learner_id}` — list learner materials
+- `POST /api/materials/{material_id}/quiz` — generate material-grounded MCQs
+- `GET /api/igot` — integration information and official links
+- `POST /api/chat` accepts optional `material_id` to ground tutor responses in the selected material
 
-The AI layer is RAG-ready through `backend/app/rag.py`, which defines ingestion, chunking, retrieval, and context-injection interfaces for future PDF or notes support.
+## Important production note
+Render free web services have ephemeral filesystems. SQLite data on the service can be lost after restart, redeploy or spin-down. For a long-lived production deployment, use a persistent database such as managed PostgreSQL. The current SQLite setup is suitable for a hackathon/demo deployment but should not be presented as durable production storage.
 
-## Demo login
-The MVP intentionally has no production authentication. Enter any learner name on the landing screen. Add institutional SSO/OAuth before deployment.
-
-## Important
-This is an MVP/prototype implementation for a hackathon. It is not a production educational assessment system. AI-generated questions should be reviewed before high-stakes use.
+AI-generated assessment content should be reviewed before high-stakes use.
