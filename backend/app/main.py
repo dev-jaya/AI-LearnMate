@@ -53,6 +53,11 @@ def root(): return {"name":"AI LearnMate","status":"running"}
 @app.get("/health")
 def health(): return {"status":"ok", "service":"ai-learnmate-api"}
 
+@app.get("/health/ai")
+def ai_health():
+    provider = get_provider()
+    return {"provider": provider.name, "model": getattr(provider, "model", None), "key_loaded": bool(getattr(provider, "api_key", ""))}
+
 @app.post("/api/learners", response_model=LearnerOut)
 def create_learner(data:LearnerCreate, db:Session=Depends(get_db)):
     name = data.name.strip()
