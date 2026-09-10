@@ -1,0 +1,10 @@
+__pycache__/
+*.pyc
+.env
+.venv/
+node_modules/
+backend/.venv/
+backend/.env
+backend/ai_learnmate.db
+frontend/node_modules/
+frontend/dist/
