@@ -40,8 +40,8 @@ class QuizOut(BaseModel):
 class SubmitRequest(BaseModel):
     quiz_id: int | None = None
     learner_id: int
-    topic: str
-    difficulty: str
+    topic: str = ""
+    difficulty: str = ""
     total: int | None = Field(default=None, gt=0, le=50)
     correct: int | None = Field(default=None, ge=0, le=50)
     answers: List[int] = Field(default_factory=list, max_length=50)
@@ -51,6 +51,7 @@ class ChatRequest(BaseModel):
     message: str = Field(min_length=1, max_length=4000)
     topic: str = ""
     conversation_id: int | None = None
+    material_id: int | None = None
 
 class ChatMessageOut(BaseModel):
     id: int
