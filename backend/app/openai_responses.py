@@ -1,7 +1,7 @@
 """OpenAI Responses API provider for AI LearnMate.
 
 This module keeps the app's existing provider interface while using the
-current Responses API for both tutoring and question generation.
+current Responses API for tutoring and question generation.
 """
 import json
 import logging
@@ -23,7 +23,7 @@ def _clean_json(text: str) -> str:
 
 
 class _ProviderName(str):
-    """Display as openai, while remaining compatible with the legacy Gemini gate."""
+    """Display as openai while remaining compatible with the legacy Gemini gate."""
     def __eq__(self, other):
         return other in {"openai", "gemini"} or str.__eq__(self, other)
 
@@ -204,7 +204,7 @@ try:
         if settings.ai_provider == "huggingface" and settings.hf_base_url and settings.hf_api_key and settings.hf_model:
             return _ai_providers.HuggingFaceProvider()
         if settings.llm_base_url and settings.llm_model and settings.llm_api_key:
-            return _OpenAIResponsesProvider()
+            return OpenAIResponsesProvider()
         return _ai_providers.FallbackProvider()
 
     _ai_providers.get_provider.__code__ = _get_provider_with_responses.__code__
