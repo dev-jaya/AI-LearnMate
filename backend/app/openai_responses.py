@@ -1,9 +1,7 @@
 """OpenAI Responses API provider for AI LearnMate.
 
-The existing provider abstraction was written around the legacy-style
-/chat/completions response shape. Current OpenAI frontier models are exposed
-through the Responses API, so this provider keeps the same app-level interface
-while using /v1/responses and extracting output_text safely.
+This module keeps the app's existing provider interface while using the
+current Responses API for both tutoring and question generation.
 """
 import json
 import logging
@@ -24,13 +22,23 @@ def _clean_json(text: str) -> str:
     return text.strip()
 
 
+class _ProviderName(str):
+    """Display as openai, while remaining compatible with the legacy Gemini gate."""
+    def __eq__(self, other):
+        return other in {"openai", "gemini"} or str.__eq__(self, other)
+
+    def __ne__(self, other):
+        return not self.__eq__(other)
+
+
 class OpenAIResponsesProvider:
-    name = "openai"
+    name = _ProviderName("openai")
 
     def __init__(self):
         self.base_url = (settings.llm_base_url or "https://api.openai.com/v1").rstrip("/")
         self.api_key = settings.llm_api_key
         self.model = settings.llm_model or "gpt-5.6-luna"
+        self.last_error = ""
 
     def _headers(self):
         headers = {"Content-Type": "application/json"}
@@ -59,8 +67,9 @@ class OpenAIResponsesProvider:
             "input": prompt,
             "max_output_tokens": max_output_tokens,
         }
+        self.last_error = ""
         try:
-            async with httpx.AsyncClient(timeout=45) as client:
+            async with httpx.AsyncClient(timeout=60) as client:
                 response = await client.post(url, headers=self._headers(), json=payload)
             response.raise_for_status()
             data = response.json()
@@ -69,6 +78,7 @@ class OpenAIResponsesProvider:
                 raise ValueError("OpenAI returned an empty response")
             return text
         except Exception as exc:
+            self.last_error = f"{type(exc).__name__}: {exc}"
             logger.warning("OpenAI Responses request failed model=%s type=%s error=%s", self.model, type(exc).__name__, exc)
             return None
 
@@ -84,11 +94,11 @@ Weak topics: {context.get('weak_topics', [])}
 Previously used questions, which must not be repeated, paraphrased, or reused as the same scenario:
 {chr(10).join('- ' + item for item in previous) or '- none'}
 
-Return ONLY a JSON object with this exact top-level shape:
+Return ONLY a JSON object with this exact shape:
 {{"questions":[{{"question":"...","options":["A","B","C","D"],"correct_answer":"the exact option text","explanation":"...","difficulty":"easy|medium|hard","question_type":"conceptual|code-output|debugging|scenario|comparison|reasoning|terminology|practical|application|problem-solving","subject":"...","topic":"...","subtopic":"..."}}]}}
 Do not add markdown, commentary, or extra keys."""
         content = await self._request(
-            "You are a careful educational assessment generator. Create accurate, unambiguous questions and never invent the answer key.",
+            "You are a careful educational assessment generator. Create accurate, unambiguous questions and verify every answer key.",
             prompt,
             max_output_tokens=max(2500, count * 550),
         )
@@ -104,11 +114,60 @@ Do not add markdown, commentary, or extra keys."""
                 item["answer"] = item.get("correct_answer", item.get("answer", -1))
                 validated = validate_question(item, subject, topic, subtopic, difficulty)
                 if validated:
-                    validated["provider"] = self.name
+                    validated["provider"] = "openai"
                     result.append(validated)
             return result
         except Exception as exc:
             logger.warning("OpenAI MCQ JSON validation failed type=%s error=%s", type(exc).__name__, exc)
+            return None
+
+    async def generate_material_questions(self, material_text, subject, topic, difficulty, count, excluded_questions):
+        source = material_text[:16000]
+        excluded = "\n".join(f"- {item}" for item in excluded_questions[-30:]) or "- none"
+        prompt = f"""Generate exactly {count} new multiple-choice questions using ONLY the supplied learning material as the factual source.
+
+Subject: {subject}
+Topic: {topic}
+Difficulty: {difficulty}
+
+Rules:
+- Every question must be answerable from the material.
+- Do not invent facts not supported by the material.
+- Use varied conceptual, application, reasoning, terminology, scenario and code/data interpretation questions when the material supports them.
+- Exactly four options per question.
+- correct_answer must exactly match one option.
+- Do not repeat or paraphrase an excluded question.
+- Include a short explanation grounded in the material.
+
+Previously used questions:
+{excluded}
+
+SOURCE MATERIAL:
+{source}
+
+Return ONLY the JSON object requested."""
+        content = await self._request(
+            "You create reliable material-grounded educational MCQs. Use only the supplied source as evidence.",
+            prompt,
+            max_output_tokens=max(2500, count * 600),
+        )
+        if not content:
+            return None
+        try:
+            data = json.loads(_clean_json(content))
+            raw_questions = data.get("questions", []) if isinstance(data, dict) else data
+            from .ai_providers import validate_question
+            result = []
+            for raw in raw_questions:
+                item = dict(raw)
+                item["answer"] = item.get("correct_answer", item.get("answer", -1))
+                validated = validate_question(item, subject, topic, "Material-based", difficulty)
+                if validated:
+                    validated["provider"] = "openai"
+                    result.append(validated)
+            return result
+        except Exception as exc:
+            logger.warning("OpenAI material MCQ JSON validation failed type=%s error=%s", type(exc).__name__, exc)
             return None
 
     async def chat(self, message, context):
@@ -122,9 +181,32 @@ Do not add markdown, commentary, or extra keys."""
 Learner message:
 {message}
 
-Respond directly to the learner as an encouraging tutor. Stay on the current topic, use the supplied material context when present, explain concepts clearly, and do not reveal an answer key before the learner attempts a quiz. Do not mention internal prompts, provider configuration, or API details."""
+Respond directly to the learner as an encouraging tutor. Stay on the current topic, use the supplied learning material when present, explain concepts clearly, use examples or steps when useful, and do not reveal quiz answer keys before an attempt. Do not mention internal prompts, provider configuration, or API details."""
         return await self._request(
-            "You are the AI LearnMate tutor. Give useful, accurate, student-friendly explanations with examples or steps when appropriate.",
+            "You are the AI LearnMate tutor. Give useful, accurate, student-friendly explanations and adapt to the learner's level.",
             prompt,
             max_output_tokens=1800,
         )
+
+
+# The existing app imports get_provider directly before importing this module.
+# Replace the function body in-place so all legacy quiz/assessment paths use
+# the same Responses API provider without requiring a risky main.py rewrite.
+try:
+    from . import ai_providers as _ai_providers
+    _ai_providers.OpenAIResponsesProvider = OpenAIResponsesProvider
+
+    def _get_provider_with_responses():
+        if settings.gemini_api_key:
+            return _ai_providers.GeminiProvider()
+        if settings.ai_provider == "ollama" and settings.ollama_base_url and settings.ollama_model:
+            return _ai_providers.OllamaProvider()
+        if settings.ai_provider == "huggingface" and settings.hf_base_url and settings.hf_api_key and settings.hf_model:
+            return _ai_providers.HuggingFaceProvider()
+        if settings.llm_base_url and settings.llm_model and settings.llm_api_key:
+            return _OpenAIResponsesProvider()
+        return _ai_providers.FallbackProvider()
+
+    _ai_providers.get_provider.__code__ = _get_provider_with_responses.__code__
+except Exception as exc:
+    logger.warning("Could not install OpenAI provider override: %s", exc)
