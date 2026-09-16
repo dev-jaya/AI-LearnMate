@@ -4,7 +4,7 @@ from uuid import uuid4
 from sqlalchemy.orm import Session
 
 from app import main
-from app.models import Learner, Message, Conversation
+from app.models import Learner
 from app.materials import Material
 from app.schemas import ChatRequest, QuizRequest
 
@@ -60,10 +60,6 @@ def test_chat_history_is_saved_and_reloadable(monkeypatch):
         contents = [item["content"] for item in messages]
         assert "Hello from automated tests" in contents
         assert "Echo: Hello from automated tests" in contents
-        db.query(Message).filter(Message.conversation_id == conversation_id).delete()
-        db.query(Conversation).filter(Conversation.id == conversation_id).delete()
-        db.delete(learner)
-        db.commit()
 
 
 def test_material_quiz_uses_configured_provider_without_gemini(monkeypatch):
@@ -93,6 +89,3 @@ def test_material_quiz_uses_configured_provider_without_gemini(monkeypatch):
         assert len(quiz["questions"]) == 3
         assert all(question["provider"] == "openai" for question in quiz["questions"])
         assert all(question["answer"] in range(4) for question in quiz["questions"])
-        db.delete(material)
-        db.delete(learner)
-        db.commit()
