@@ -72,22 +72,27 @@ def extract_text(filename: str, raw: bytes, mime_type: str = "") -> str:
     if suffix not in SUPPORTED_EXTENSIONS:
         raise ValueError("Unsupported file type. Use PDF, TXT, Markdown, CSV, JSON, HTML, DOCX or PPTX.")
 
-    if suffix == ".pdf":
-        try:
-            from pypdf import PdfReader
-        except ImportError as exc:
-            raise ValueError("PDF support is not installed on the server.") from exc
-        reader = PdfReader(BytesIO(raw))
-        parts = [(page.extract_text() or "") for page in reader.pages]
-        text = "\n".join(parts)
-    elif suffix == ".docx":
-        text = _xml_text(raw, ("word/document.xml",))
-    elif suffix == ".pptx":
-        text = _xml_text(raw, ("ppt/slides/", "ppt/notesSlides/"))
-    elif suffix in {".html", ".htm"}:
-        text = _clean_html(raw.decode("utf-8", errors="ignore"))
-    else:
-        text = raw.decode("utf-8", errors="ignore")
+    try:
+        if suffix == ".pdf":
+            try:
+                from pypdf import PdfReader
+            except ImportError as exc:
+                raise ValueError("PDF support is not installed on the server.") from exc
+            reader = PdfReader(BytesIO(raw))
+            parts = [(page.extract_text() or "") for page in reader.pages]
+            text = "\n".join(parts)
+        elif suffix == ".docx":
+            text = _xml_text(raw, ("word/document.xml",))
+        elif suffix == ".pptx":
+            text = _xml_text(raw, ("ppt/slides/", "ppt/notesSlides/"))
+        elif suffix in {".html", ".htm"}:
+            text = _clean_html(raw.decode("utf-8", errors="ignore"))
+        else:
+            text = raw.decode("utf-8", errors="ignore")
+    except ValueError:
+        raise
+    except Exception as exc:
+        raise ValueError(f"Could not read the document: {type(exc).__name__}.") from exc
 
     text = re.sub(r"\s+", " ", text).strip()
     if len(text) < 80:
@@ -114,7 +119,7 @@ def material_chunks(text: str, size: int = 1800, overlap: int = 250) -> list[str
     return chunks
 
 
-def retrieve_material_context(text: str, query: str, limit: int = 8, max_chars: int = 10000) -> str:
+def retrieve_material_context(text: str, query: str, limit: int = 24, max_chars: int = 50000) -> str:
     chunks = material_chunks(text)
     if not chunks:
         return ""
@@ -124,7 +129,30 @@ def retrieve_material_context(text: str, query: str, limit: int = 8, max_chars: 
         chunk_words = set(re.findall(r"[a-zA-Z0-9]{3,}", chunk.lower()))
         score = len(words & chunk_words)
         scored.append((score, -index, chunk))
-    selected = [chunk for _, _, chunk in sorted(scored, reverse=True)[:limit]]
+
+    ranked = sorted(scored, reverse=True)
+    selected: list[str] = []
+    seen_indexes: set[int] = set()
+    # Keep representative coverage across the document so document-wide quizzes
+    # do not accidentally depend on only the first few pages/paragraphs.
+    if len(chunks) <= limit:
+        selected = chunks[:]
+    else:
+        spread = max(1, len(chunks) // min(limit, 12))
+        for index in range(0, len(chunks), spread):
+            selected.append(chunks[index])
+            seen_indexes.add(index)
+            if len(selected) >= min(limit // 2, 12):
+                break
+        for _score, neg_index, chunk in ranked:
+            index = -neg_index
+            if index in seen_indexes:
+                continue
+            selected.append(chunk)
+            seen_indexes.add(index)
+            if len(selected) >= limit:
+                break
+
     selected_text = "\n\n--- MATERIAL CHUNK ---\n\n".join(selected)
     return selected_text[:max_chars]
 
