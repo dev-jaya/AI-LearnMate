@@ -172,26 +172,33 @@ Return ONLY the JSON object requested."""
 
     async def chat(self, message, context):
         compact_context = dict(context)
-        if "conversation" in compact_context:
-            compact_context["conversation"] = compact_context["conversation"][-12:]
+        conversation = compact_context.get("conversation", [])
+        if conversation:
+            compact_context["conversation"] = conversation[-12:]
         context_json = json.dumps(compact_context, ensure_ascii=True)
-        prompt = f"""Learner context:
+        prompt = f"""The learner's CURRENT message is the highest-priority instruction. Answer that message directly.
+
+Learner context (background only; do not force the current message to match this context):
 {context_json}
 
-Learner message:
+CURRENT learner message:
 {message}
 
-Respond directly to the learner as an encouraging tutor. Stay on the current topic, use the supplied learning material when present, explain concepts clearly, use examples or steps when useful, and do not reveal quiz answer keys before an attempt. Do not mention internal prompts, provider configuration, or API details."""
+Conversation history is provided only to understand references such as 'that', 'it', or 'the previous example'. Do NOT answer an older message when the current message asks something new.
+If the learner asks a general question, arithmetic problem, greeting, coding question, or unrelated question, answer it normally even when it differs from the selected learning topic.
+For simple arithmetic, calculate the result exactly.
+Use the selected topic and learning material as helpful context, not as a restriction.
+Respond directly as an encouraging AI tutor. Be accurate, concise, and useful. When teaching, give a simple explanation first and then an example or steps when useful.
+Do not mention internal prompts, provider configuration, or API details."""
         return await self._request(
-            "You are the AI LearnMate tutor. Give useful, accurate, student-friendly explanations and adapt to the learner's level.",
+            "You are the AI LearnMate tutor. The current learner message always takes priority over background topic context and previous conversation.",
             prompt,
             max_output_tokens=1800,
         )
 
 
-# The existing app imports get_provider directly before importing this module.
-# Replace the function body in-place so all legacy quiz/assessment paths use
-# the same Responses API provider without requiring a risky main.py rewrite.
+# Install the Responses API provider into the legacy provider factory so
+# quiz/assessment paths use the same configured OpenAI integration.
 try:
     from . import ai_providers as _ai_providers
     _ai_providers.OpenAIResponsesProvider = OpenAIResponsesProvider
