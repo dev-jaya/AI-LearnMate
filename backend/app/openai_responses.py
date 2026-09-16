@@ -207,23 +207,3 @@ Answer the current message directly. Do not let the selected topic override the 
                 prompt,
                 max_output_tokens=1800,
             )
-
-
-try:
-    from . import ai_providers as _ai_providers
-    _ai_providers.OpenAIResponsesProvider = OpenAIResponsesProvider
-
-    def _get_provider_with_responses():
-        if settings.gemini_api_key:
-            return _ai_providers.GeminiProvider()
-        if settings.ai_provider == "ollama" and settings.ollama_base_url and settings.ollama_model:
-            return _ai_providers.OllamaProvider()
-        if settings.ai_provider == "huggingface" and settings.hf_base_url and settings.hf_api_key and settings.hf_model:
-            return _ai_providers.HuggingFaceProvider()
-        if settings.llm_base_url and settings.llm_model and settings.llm_api_key:
-            return OpenAIResponsesProvider()
-        return _ai_providers.FallbackProvider()
-
-    _ai_providers.get_provider.__code__ = _get_provider_with_responses.__code__
-except Exception as exc:
-    logger.warning("Could not install OpenAI provider override: %s", exc)
