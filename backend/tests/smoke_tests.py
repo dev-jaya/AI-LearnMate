@@ -8,7 +8,7 @@ ROOT = Path(__file__).resolve().parents[2]
 BACKEND = ROOT / "backend"
 sys.path.insert(0, str(BACKEND))
 
-from app.ai_providers import GeminiProvider, get_provider
+from app.ai_providers import MCQ_SCHEMA, GeminiProvider, _legacy_schema, get_provider
 from app.config import settings
 from app.materials import extract_text, material_chunks, validate_igot_url
 
@@ -30,10 +30,15 @@ def run():
     assert provider.name == "gemini"
     assert get_provider().name == "gemini"
     assert settings.gemini_model
+    assert MCQ_SCHEMA["type"] == "object"
+    assert MCQ_SCHEMA["properties"]["questions"]["type"] == "array"
+    assert _legacy_schema(MCQ_SCHEMA)["type"] == "OBJECT"
+    assert _legacy_schema(MCQ_SCHEMA)["properties"]["questions"]["type"] == "ARRAY"
 
     async def provider_check():
         async def fake_generate(contents, system, response_schema=None, json_mode=False):
             assert response_schema is not None and json_mode
+            assert response_schema["type"] == "object"
             return json.dumps({"questions": [{"question": "Which condition does binary search require?", "options": ["Sorted data", "Random data only", "An image", "A database server"], "correct_answer": "Sorted data", "explanation": "Binary search relies on ordered data.", "difficulty": "easy", "question_type": "conceptual", "subject": "Algorithms", "topic": "Binary Search", "subtopic": "Searching"}]})
         provider._generate = fake_generate
         questions = await provider.generate_material_questions(text, "Algorithms", "Binary Search", "easy", 1, [])
@@ -50,6 +55,7 @@ def run():
     assert '"provider":"gemini"' in backend_source.replace(" ", "")
     assert "gemini_api_key" in config_source and "gemini_model" in config_source
     assert "GeminiProvider" in provider_source and "get_provider" in provider_source
+    assert "response_format" in provider_source and "x-goog-api-key" in provider_source
     for contract in ["loadConversationHistory", "openConversation", "Conversation history", "/conversations/", "chatMessagesRef", "scrollTo", "New conversation", "Thinking…", "Shift+Enter", "code-block", "copy-code", "AI LearnMate Assistant", "currentQuestion", "Next Question", "Restart Quiz"]:
         assert contract in frontend_source, contract
     assert "const activeMaterialId=forcedMaterialId??materialId" in frontend_source and "material_id:activeMaterialId" in frontend_source
