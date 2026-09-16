@@ -1,22 +1,32 @@
 # AI LearnMate — SIH26101 Smart Education
 
-AI LearnMate is an AI-enabled learning platform for personalized training, competency-gap practice and automated assessment. It is designed around the SIH26101 MoSPI Smart Education problem statement: personalized learning, competency development, quizzes/MCQs from learning material, and an iGOT Karmayogi-oriented learning flow.
+AI LearnMate is an AI-enabled learning platform for personalized training, competency-gap practice, automated assessment and conversational learning assistance. It is designed around the SIH26101 Smart Education problem statement: personalized learning, competency development, quizzes/MCQs from learning material, and an iGOT Karmayogi-oriented learning flow.
 
 ## Core workflow
 1. Learner creates a lightweight demo profile.
 2. Adaptive assessments estimate topic mastery and expose weak areas.
-3. Learner uploads a learning material or selects a public iGOT Karmayogi resource URL.
+3. Learner uploads learning material or selects a public iGOT Karmayogi resource URL.
 4. The backend extracts readable text and stores the material against the learner.
-5. The configured LLM provider generates validated MCQs grounded in the selected material.
+5. Google Gemini generates validated MCQs grounded in the selected material.
 6. Question fingerprints and similarity checks prevent repeats for the learner.
 7. Quiz results update mastery and recommendations.
-8. The configured LLM tutor can continue the conversation with learner context and selected material context.
+8. The Gemini-powered tutor continues the conversation with learner context and selected material context when available.
+
+## AI Assistant capabilities
+- General questions and concept explanations
+- Programming and engineering doubt solving
+- Code explanation, debugging and corrected examples
+- Exam-ready answers for short, 5-mark and 10-mark questions
+- Practical learning, project, study and next-step suggestions
+- Learning-progress and recent-activity review using application-provided data only
+- Conversational history with persistent database storage
+- Material-grounded assistance for uploaded or imported learning content
 
 ## SIH26101 feature coverage
 - AI-enabled personalized learning platform
 - Competency-gap detection from assessment history
 - Personalized learning path and next-best-action recommendations
-- LLM-powered tutor conversation
+- Gemini-powered tutor conversation
 - Dynamic, non-repeating MCQ generation
 - Uploaded PDF/DOCX/PPTX/TXT/Markdown/CSV/JSON/HTML material ingestion
 - Material-grounded MCQ generation from uploaded content
@@ -25,13 +35,13 @@ AI LearnMate is an AI-enabled learning platform for personalized training, compe
 - Persistent learner, quiz, question-history and conversation records
 
 ### iGOT integration note
-The current demo implements a safe **public-resource connector**: users can paste a public iGOT Karmayogi resource URL and AI LearnMate imports readable public content for learning/assessment. Official iGOT pages document authenticated government-user access and role-based portals; authenticated production API/SSO integration would require official credentials, API specifications and authorization from the iGOT/Karmayogi Bharat ecosystem. AI LearnMate does not claim an authenticated government API integration without those prerequisites.
+The current demo implements a safe **public-resource connector**: users can paste a public iGOT Karmayogi resource URL and AI LearnMate imports readable public content for learning and assessment. Authenticated production API/SSO integration would require official credentials, API specifications and authorization from the iGOT/Karmayogi Bharat ecosystem.
 
 ## Technology
 - Frontend: React + Vite
 - Backend: Python + FastAPI
 - Database: SQLite by default; PostgreSQL can be substituted later
-- AI: configurable provider architecture; current Render deployment uses the OpenAI-compatible LLM provider with `gpt-5.6-luna`
+- AI: Google Gemini API through a backend provider abstraction
 - Material extraction: pypdf plus built-in DOCX/PPTX/XML and text extraction
 - Analytics: mastery scoring, weak-topic detection and recommendations
 
@@ -47,6 +57,7 @@ source .venv/bin/activate
 pip install -r requirements.txt
 uvicorn app.main:app --reload --port 8000
 ```
+
 API: http://localhost:8000
 Swagger: http://localhost:8000/docs
 
@@ -56,19 +67,24 @@ cd frontend
 npm install
 npm run dev
 ```
+
 Open the Vite URL, normally http://localhost:5173.
 
 ## Environment
 Backend `.env` / Render environment:
-- `AI_PROVIDER=llm`
-- `LLM_BASE_URL=https://api.openai.com/v1`
-- `LLM_MODEL=gpt-5.6-luna`
-- `LLM_API_KEY` — backend-only OpenAI API secret
+```env
+GEMINI_API_KEY=your_server_side_key
+GEMINI_MODEL=gemini-2.5-flash
+GEMINI_BASE_URL=https://generativelanguage.googleapis.com/v1beta
+DATABASE_URL=sqlite:///./ai_learnmate.db
+```
 
-Legacy Gemini variables are supported by the provider architecture, but the current deployment has Gemini disabled. Never put an AI API key in frontend code or Vite environment variables.
+The API key must remain server-side. Never put it in browser code or Vite environment variables.
 
 Frontend production:
-- `VITE_API_URL=https://ai-learnmate-backend.onrender.com`
+```env
+VITE_API_URL=https://ai-learnmate-backend.onrender.com
+```
 
 ## Material APIs
 - `POST /api/materials/upload` — upload supported learning material
@@ -76,9 +92,9 @@ Frontend production:
 - `GET /api/materials/{learner_id}` — list learner materials
 - `POST /api/materials/{material_id}/quiz` — generate material-grounded MCQs
 - `GET /api/igot` — integration information and official links
-- `POST /api/chat` accepts optional `material_id` to ground tutor responses in the selected material
+- `POST /api/chat` — persistent conversational tutor; optional `material_id` grounds the answer in selected material
 
-## Important production note
-Render free web services have ephemeral filesystems. SQLite data on the service can be lost after restart, redeploy or spin-down. For a long-lived production deployment, use a persistent database such as managed PostgreSQL. The current SQLite setup is suitable for a hackathon/demo deployment but should not be presented as durable production storage.
+## Production note
+Render free web services have ephemeral filesystems. SQLite data can be lost after restart, redeploy or spin-down. For a long-lived production deployment, use a persistent database such as managed PostgreSQL.
 
 AI-generated assessment content should be reviewed before high-stakes use.
