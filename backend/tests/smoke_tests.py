@@ -11,7 +11,6 @@ ROOT = Path(__file__).resolve().parents[2]
 
 
 def run():
-    # Calculator and agent orchestration.
     assert _safe_calculate("2 + 10")["result"] == 12
     assert _safe_calculate("3 * (4 + 2)")["result"] == 18
 
@@ -32,18 +31,16 @@ def run():
 
     asyncio.run(agent_check())
 
-    # Material extraction and official-domain validation.
     text = "Binary search works on sorted data by repeatedly checking the middle element and discarding the impossible half. " * 3
     assert "Binary search" in extract_text("lesson.txt", text.encode(), "text/plain")
     assert len(material_chunks(text, size=100, overlap=20)) > 1
     assert validate_igot_url("https://igotkarmayogi.gov.in/course/123").startswith("https://igotkarmayogi.gov.in")
 
-    # Validate OpenAI material-MCQ parsing without calling the network.
     provider = OpenAIResponsesProvider()
     assert provider.name == "openai"
 
     async def provider_check():
-        async def fake_request(system, prompt, max_output_tokens=3500, tools=None):
+        async def fake_request(system, prompt, max_output_tokens=3500, tools=None, json_schema=None):
             return json.dumps({"questions": [{
                 "question": "Which condition does binary search require?",
                 "options": ["Sorted data", "Random data only", "An image", "A database server"],
@@ -64,7 +61,6 @@ def run():
 
     asyncio.run(provider_check())
 
-    # Contract checks for the provider-neutral material route and saved chat history UI.
     backend_source = (ROOT / "backend/app/main.py").read_text(encoding="utf-8")
     frontend_source = (ROOT / "frontend/src/main.jsx").read_text(encoding="utf-8")
     assert "async def _generate_material_quiz" in backend_source
@@ -76,6 +72,16 @@ def run():
     assert "openConversation" in frontend_source
     assert "Conversation history" in frontend_source
     assert "/conversations/" in frontend_source
+
+    # Critical product flow: upload/import -> selected material -> ChatGPT-backed quiz -> website quiz state.
+    assert "Upload & Generate Quiz" in frontend_source
+    assert "Import & Generate Quiz" in frontend_source
+    assert "await sendChat('Generate 5 MCQs with four options from this uploaded document. Use only the document as the source.',data.id)" in frontend_source
+    assert "await sendChat('Generate 5 MCQs with four options from this imported learning material. Use only the material as the source.',data.id)" in frontend_source
+    assert "const sendChat=async(prompt,forcedMaterialId=null)" in frontend_source
+    assert "const activeMaterialId=forcedMaterialId??materialId" in frontend_source
+    assert "material_id:activeMaterialId" in frontend_source
+    assert "if(data.quiz){setQuiz(data.quiz);setAnswers([]);setDone(false);setScore(null)}" in frontend_source
 
     print("AI LearnMate backend/frontend smoke tests: PASS")
 
