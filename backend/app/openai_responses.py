@@ -35,6 +35,18 @@ class OpenAIResponsesProvider:
         self.api_key = settings.llm_api_key
         self.model = settings.llm_model or "gpt-5.6-luna"
         self.last_error = ""
+        # The legacy material endpoint imports this function directly. Replace
+        # that callable when the configured provider is OpenAI so material MCQs
+        # use the same Responses API rather than the old Gemini-only generator.
+        try:
+            import sys
+            main_module = sys.modules.get("app.main") or sys.modules.get("backend.app.main")
+            if main_module is not None and self.api_key and self.model:
+                async def _material_adapter(material_text, subject, topic, difficulty, count, excluded_questions):
+                    return await self.generate_material_questions(material_text, subject, topic, difficulty, count, excluded_questions)
+                main_module.generate_material_questions = _material_adapter
+        except Exception as exc:
+            logger.debug("Material adapter patch skipped: %s", exc)
 
     def _headers(self):
         headers = {"Content-Type": "application/json"}
@@ -170,12 +182,7 @@ Return ONLY the JSON object requested."""
             return None
 
     async def chat(self, message, context):
-        """Run the full agent for a chat turn.
-
-        The agent can search the web for current information, calculate arithmetic,
-        read the learner profile/material context, and keep the current message
-        higher priority than the selected topic.
-        """
+        """Run the full tool-using AI agent for a chat turn."""
         try:
             from .agent import LearnMateAgent
 
@@ -194,25 +201,16 @@ Return ONLY the JSON object requested."""
                     material = context.get("material_context")
                     if not material:
                         return {"available": False, "message": "No learning material is selected for this chat."}
-                    return {
-                        "available": True,
-                        "title": context.get("material_title", "Selected material"),
-                        "content": material[:16000],
-                    }
+                    return {"available": True, "title": context.get("material_title", "Selected material"), "content": material[:16000]}
                 if name == "start_quiz":
-                    return {
-                        "available": False,
-                        "message": "Quiz creation is handled by the LearnMate assessment action in the chat endpoint.",
-                    }
+                    return {"available": False, "message": "Quiz creation is handled by the LearnMate assessment action in the chat endpoint."}
                 return {"error": f"Unknown tool: {name}"}
 
             agent = LearnMateAgent(execute_tool)
-            reply, actions = await agent.run(message, context)
-            if reply:
-                return reply
-            return None
+            reply, _actions = await agent.run(message, context)
+            return reply if reply else None
         except Exception as exc:
-            logger.warning("LearnMate agent failed; falling back to direct Responses call: %s: %s", type(exc).__name__, exc)
+            logger.warning("LearnMate agent failed; using direct Responses fallback: %s: %s", type(exc).__name__, exc)
             compact_context = dict(context)
             conversation = compact_context.get("conversation", [])
             if conversation:
@@ -232,8 +230,6 @@ Answer the current message directly. Do not let the selected topic override the 
             )
 
 
-# Install the Responses API provider into the legacy provider factory so
-# quiz/assessment paths use the same configured OpenAI integration.
 try:
     from . import ai_providers as _ai_providers
     _ai_providers.OpenAIResponsesProvider = OpenAIResponsesProvider
