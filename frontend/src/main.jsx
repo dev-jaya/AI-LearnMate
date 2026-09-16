@@ -1,4 +1,5 @@
 import React,{useEffect,useState} from 'react';
+import {createRoot} from 'react-dom/client';
 import {BrainCircuit,Target,BookOpen,BarChart3,ArrowRight,CheckCircle2,Sparkles,MessageCircle,Send,RotateCcw,Upload,Link as LinkIcon,FileText,ExternalLink,Bot,Globe2,WandSparkles,Copy,Check,History,MessageSquareText} from 'lucide-react';
 import './style.css';
 
