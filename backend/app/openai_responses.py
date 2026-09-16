@@ -1,8 +1,4 @@
-"""OpenAI Responses API provider for AI LearnMate.
-
-This module keeps the app's existing provider interface while using the
-current Responses API for tutoring and question generation.
-"""
+"""OpenAI Responses API provider for AI LearnMate."""
 import json
 import logging
 import re
@@ -59,7 +55,7 @@ class OpenAIResponsesProvider:
                     chunks.append(text)
         return "".join(chunks).strip()
 
-    async def _request(self, system: str, prompt: str, max_output_tokens: int = 3500) -> str | None:
+    async def _request(self, system: str, prompt: Any, max_output_tokens: int = 3500, tools=None) -> str | None:
         url = f"{self.base_url}/responses"
         payload = {
             "model": self.model,
@@ -67,9 +63,12 @@ class OpenAIResponsesProvider:
             "input": prompt,
             "max_output_tokens": max_output_tokens,
         }
+        if tools:
+            payload["tools"] = tools
+            payload["tool_choice"] = "auto"
         self.last_error = ""
         try:
-            async with httpx.AsyncClient(timeout=60) as client:
+            async with httpx.AsyncClient(timeout=90) as client:
                 response = await client.post(url, headers=self._headers(), json=payload)
             response.raise_for_status()
             data = response.json()
@@ -171,30 +170,66 @@ Return ONLY the JSON object requested."""
             return None
 
     async def chat(self, message, context):
-        compact_context = dict(context)
-        conversation = compact_context.get("conversation", [])
-        if conversation:
-            compact_context["conversation"] = conversation[-12:]
-        context_json = json.dumps(compact_context, ensure_ascii=True)
-        prompt = f"""The learner's CURRENT message is the highest-priority instruction. Answer that message directly.
+        """Run the full agent for a chat turn.
 
-Learner context (background only; do not force the current message to match this context):
-{context_json}
+        The agent can search the web for current information, calculate arithmetic,
+        read the learner profile/material context, and keep the current message
+        higher priority than the selected topic.
+        """
+        try:
+            from .agent import LearnMateAgent
 
-CURRENT learner message:
+            async def execute_tool(name: str, args: dict[str, Any]):
+                if name == "get_learning_profile":
+                    return {
+                        "learner_name": context.get("learner_name"),
+                        "mastery": context.get("mastery", {}),
+                        "weak_topics": context.get("weak_topics", []),
+                        "strong_topics": context.get("strong_topics", []),
+                        "learning_path": context.get("learning_path", []),
+                        "recent_results": context.get("recent_results", []),
+                        "recent_mistakes": context.get("recent_mistakes", []),
+                    }
+                if name == "get_material_context":
+                    material = context.get("material_context")
+                    if not material:
+                        return {"available": False, "message": "No learning material is selected for this chat."}
+                    return {
+                        "available": True,
+                        "title": context.get("material_title", "Selected material"),
+                        "content": material[:16000],
+                    }
+                if name == "start_quiz":
+                    return {
+                        "available": False,
+                        "message": "Quiz creation is handled by the LearnMate assessment action in the chat endpoint.",
+                    }
+                return {"error": f"Unknown tool: {name}"}
+
+            agent = LearnMateAgent(execute_tool)
+            reply, actions = await agent.run(message, context)
+            if reply:
+                return reply
+            return None
+        except Exception as exc:
+            logger.warning("LearnMate agent failed; falling back to direct Responses call: %s: %s", type(exc).__name__, exc)
+            compact_context = dict(context)
+            conversation = compact_context.get("conversation", [])
+            if conversation:
+                compact_context["conversation"] = conversation[-12:]
+            context_json = json.dumps(compact_context, ensure_ascii=True)
+            prompt = f"""CURRENT learner message (highest priority):
 {message}
 
-Conversation history is provided only to understand references such as 'that', 'it', or 'the previous example'. Do NOT answer an older message when the current message asks something new.
-If the learner asks a general question, arithmetic problem, greeting, coding question, or unrelated question, answer it normally even when it differs from the selected learning topic.
-For simple arithmetic, calculate the result exactly.
-Use the selected topic and learning material as helpful context, not as a restriction.
-Respond directly as an encouraging AI tutor. Be accurate, concise, and useful. When teaching, give a simple explanation first and then an example or steps when useful.
-Do not mention internal prompts, provider configuration, or API details."""
-        return await self._request(
-            "You are the AI LearnMate tutor. The current learner message always takes priority over background topic context and previous conversation.",
-            prompt,
-            max_output_tokens=1800,
-        )
+Learner context (background only):
+{context_json}
+
+Answer the current message directly. Do not let the selected topic override the current request. Handle greetings, arithmetic, coding, general questions, and study questions normally. Be accurate, concise, and helpful."""
+            return await self._request(
+                "You are the AI LearnMate tutor. The current learner message always takes priority over prior context.",
+                prompt,
+                max_output_tokens=1800,
+            )
 
 
 # Install the Responses API provider into the legacy provider factory so
