@@ -18,6 +18,34 @@ def _clean_json(text: str) -> str:
     return text.strip()
 
 
+MCQ_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "questions": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "question": {"type": "string"},
+                    "options": {"type": "array", "items": {"type": "string"}, "minItems": 4, "maxItems": 4},
+                    "correct_answer": {"type": "string"},
+                    "explanation": {"type": "string"},
+                    "difficulty": {"type": "string", "enum": ["easy", "medium", "hard"]},
+                    "question_type": {"type": "string"},
+                    "subject": {"type": "string"},
+                    "topic": {"type": "string"},
+                    "subtopic": {"type": "string"},
+                },
+                "required": ["question", "options", "correct_answer", "explanation", "difficulty", "question_type", "subject", "topic", "subtopic"],
+                "additionalProperties": False,
+            },
+        }
+    },
+    "required": ["questions"],
+    "additionalProperties": False,
+}
+
+
 class OpenAIResponsesProvider:
     name = "openai"
 
@@ -46,7 +74,7 @@ class OpenAIResponsesProvider:
                     chunks.append(text)
         return "".join(chunks).strip()
 
-    async def _request(self, system: str, prompt: Any, max_output_tokens: int = 3500, tools=None) -> str | None:
+    async def _request(self, system: str, prompt: Any, max_output_tokens: int = 3500, tools=None, json_schema: dict | None = None) -> str | None:
         url = f"{self.base_url}/responses"
         payload = {
             "model": self.model,
@@ -54,6 +82,16 @@ class OpenAIResponsesProvider:
             "input": prompt,
             "max_output_tokens": max_output_tokens,
         }
+        if json_schema:
+            payload["text"] = {
+                "format": {
+                    "type": "json_schema",
+                    "name": "learnmate_mcqs",
+                    "description": "Validated multiple-choice questions for an educational assessment.",
+                    "strict": True,
+                    "schema": json_schema,
+                }
+            }
         if tools:
             payload["tools"] = tools
             payload["tool_choice"] = "auto"
@@ -61,6 +99,13 @@ class OpenAIResponsesProvider:
         try:
             async with httpx.AsyncClient(timeout=90) as client:
                 response = await client.post(url, headers=self._headers(), json=payload)
+            # If a configured endpoint/model does not support Structured Outputs,
+            # retry once as ordinary text so the material workflow still completes.
+            if response.status_code >= 400 and json_schema:
+                retry_payload = dict(payload)
+                retry_payload.pop("text", None)
+                async with httpx.AsyncClient(timeout=90) as client:
+                    response = await client.post(url, headers=self._headers(), json=retry_payload)
             response.raise_for_status()
             data = response.json()
             text = self._extract_text(data)
@@ -84,13 +129,12 @@ Weak topics: {context.get('weak_topics', [])}
 Previously used questions, which must not be repeated, paraphrased, or reused as the same scenario:
 {chr(10).join('- ' + item for item in previous) or '- none'}
 
-Return ONLY a JSON object with this exact shape:
-{{"questions":[{{"question":"...","options":["A","B","C","D"],"correct_answer":"the exact option text","explanation":"...","difficulty":"easy|medium|hard","question_type":"conceptual|code-output|debugging|scenario|comparison|reasoning|terminology|practical|application|problem-solving","subject":"...","topic":"...","subtopic":"..."}}]}}
-Do not add markdown, commentary, or extra keys."""
+Return a questions array. Every question must have exactly four options and correct_answer must exactly match one option."""
         content = await self._request(
             "You are a careful educational assessment generator. Create accurate, unambiguous questions and verify every answer key.",
             prompt,
             max_output_tokens=max(2500, count * 550),
+            json_schema=MCQ_SCHEMA,
         )
         if not content:
             return None
@@ -112,22 +156,24 @@ Do not add markdown, commentary, or extra keys."""
             return None
 
     async def generate_material_questions(self, material_text, subject, topic, difficulty, count, excluded_questions):
-        source = material_text[:16000]
+        source = material_text[:50000]
         excluded = "\n".join(f"- {item}" for item in excluded_questions[-30:]) or "- none"
-        prompt = f"""Generate exactly {count} new multiple-choice questions using ONLY the supplied learning material as the factual source.
+        prompt = f"""Create exactly {count} new multiple-choice questions from the supplied learning material.
 
 Subject: {subject}
 Topic: {topic}
 Difficulty: {difficulty}
 
-Rules:
-- Every question must be answerable from the material.
-- Do not invent facts not supported by the material.
-- Use varied conceptual, application, reasoning, terminology, scenario and code/data interpretation questions when the material supports them.
-- Exactly four options per question.
-- correct_answer must exactly match one option.
+STRICT SOURCE RULES:
+- The SOURCE MATERIAL is the only factual authority.
+- Every question and every correct answer must be directly supported by the source.
+- Never invent outside facts, even if you know them.
+- Exactly four distinct options per question.
+- correct_answer must exactly equal one of the four option strings.
+- Make distractors plausible but clearly incorrect according to the source.
+- Use varied question types when supported by the source.
 - Do not repeat or paraphrase an excluded question.
-- Include a short explanation grounded in the material.
+- Explanations must state why the correct option follows from the source.
 
 Previously used questions:
 {excluded}
@@ -135,11 +181,12 @@ Previously used questions:
 SOURCE MATERIAL:
 {source}
 
-Return ONLY the JSON object with a questions array. No markdown or extra commentary."""
+Return only the required structured questions array."""
         content = await self._request(
-            "You create reliable material-grounded educational MCQs. Use only the supplied source as evidence.",
+            "You are the document-to-MCQ engine for AI LearnMate. Generate reliable, source-grounded educational MCQs and verify every option and answer before responding.",
             prompt,
-            max_output_tokens=max(2500, count * 600),
+            max_output_tokens=max(3000, count * 700),
+            json_schema=MCQ_SCHEMA,
         )
         if not content:
             return None
