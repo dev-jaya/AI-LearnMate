@@ -1,13 +1,16 @@
 """Fast deterministic backend and frontend contract checks used by CI."""
 import asyncio
 import json
+import sys
 from pathlib import Path
+
+ROOT = Path(__file__).resolve().parents[2]
+BACKEND = ROOT / "backend"
+sys.path.insert(0, str(BACKEND))
 
 from app.agent import LearnMateAgent, _safe_calculate
 from app.materials import extract_text, material_chunks, validate_igot_url
 from app.openai_responses import OpenAIResponsesProvider
-
-ROOT = Path(__file__).resolve().parents[2]
 
 
 def run():
@@ -73,7 +76,6 @@ def run():
     assert "Conversation history" in frontend_source
     assert "/conversations/" in frontend_source
 
-    # Critical product flow: upload/import -> selected material -> ChatGPT-backed quiz -> website quiz state.
     assert "Upload & Generate Quiz" in frontend_source
     assert "Import & Generate Quiz" in frontend_source
     assert "await sendChat('Generate 5 MCQs with four options from this uploaded document. Use only the document as the source.',data.id)" in frontend_source
