@@ -18,35 +18,14 @@ def _clean_json(text: str) -> str:
     return text.strip()
 
 
-class _ProviderName(str):
-    """Display as openai while remaining compatible with the legacy Gemini gate."""
-    def __eq__(self, other):
-        return other in {"openai", "gemini"} or str.__eq__(self, other)
-
-    def __ne__(self, other):
-        return not self.__eq__(other)
-
-
 class OpenAIResponsesProvider:
-    name = _ProviderName("openai")
+    name = "openai"
 
     def __init__(self):
         self.base_url = (settings.llm_base_url or "https://api.openai.com/v1").rstrip("/")
         self.api_key = settings.llm_api_key
         self.model = settings.llm_model or "gpt-5.6-luna"
         self.last_error = ""
-        # The legacy material endpoint imports this function directly. Replace
-        # that callable when the configured provider is OpenAI so material MCQs
-        # use the same Responses API rather than the old Gemini-only generator.
-        try:
-            import sys
-            main_module = sys.modules.get("app.main") or sys.modules.get("backend.app.main")
-            if main_module is not None and self.api_key and self.model:
-                async def _material_adapter(material_text, subject, topic, difficulty, count, excluded_questions):
-                    return await self.generate_material_questions(material_text, subject, topic, difficulty, count, excluded_questions)
-                main_module.generate_material_questions = _material_adapter
-        except Exception as exc:
-            logger.debug("Material adapter patch skipped: %s", exc)
 
     def _headers(self):
         headers = {"Content-Type": "application/json"}
@@ -156,7 +135,7 @@ Previously used questions:
 SOURCE MATERIAL:
 {source}
 
-Return ONLY the JSON object requested."""
+Return ONLY the JSON object with a questions array. No markdown or extra commentary."""
         content = await self._request(
             "You create reliable material-grounded educational MCQs. Use only the supplied source as evidence.",
             prompt,
