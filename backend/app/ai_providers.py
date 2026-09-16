@@ -95,23 +95,24 @@ class FallbackProvider(AIProvider):
         return None
 
 
+# Interactions API uses standard JSON Schema type names (lowercase).
 MCQ_SCHEMA = {
-    "type": "OBJECT",
+    "type": "object",
     "properties": {
         "questions": {
-            "type": "ARRAY",
+            "type": "array",
             "items": {
-                "type": "OBJECT",
+                "type": "object",
                 "properties": {
-                    "question": {"type": "STRING"},
-                    "options": {"type": "ARRAY", "items": {"type": "STRING"}},
-                    "correct_answer": {"type": "STRING"},
-                    "explanation": {"type": "STRING"},
-                    "difficulty": {"type": "STRING"},
-                    "question_type": {"type": "STRING"},
-                    "subject": {"type": "STRING"},
-                    "topic": {"type": "STRING"},
-                    "subtopic": {"type": "STRING"},
+                    "question": {"type": "string"},
+                    "options": {"type": "array", "items": {"type": "string"}},
+                    "correct_answer": {"type": "string"},
+                    "explanation": {"type": "string"},
+                    "difficulty": {"type": "string"},
+                    "question_type": {"type": "string"},
+                    "subject": {"type": "string"},
+                    "topic": {"type": "string"},
+                    "subtopic": {"type": "string"},
                 },
                 "required": ["question", "options", "correct_answer", "explanation", "difficulty", "question_type", "subject", "topic", "subtopic"],
             },
@@ -119,6 +120,21 @@ MCQ_SCHEMA = {
     },
     "required": ["questions"],
 }
+
+
+def _legacy_schema(schema: dict[str, Any]) -> dict[str, Any]:
+    """Convert JSON Schema type names to the enum-style names accepted by the legacy endpoint."""
+    converted: dict[str, Any] = {}
+    for key, value in schema.items():
+        if key == "type" and isinstance(value, str):
+            converted[key] = value.upper()
+        elif isinstance(value, dict):
+            converted[key] = _legacy_schema(value)
+        elif isinstance(value, list):
+            converted[key] = [_legacy_schema(item) if isinstance(item, dict) else item for item in value]
+        else:
+            converted[key] = value
+    return converted
 
 
 class GeminiProvider(AIProvider):
@@ -241,7 +257,7 @@ class GeminiProvider(AIProvider):
         if json_mode:
             generation_config["responseMimeType"] = "application/json"
         if response_schema:
-            generation_config["responseSchema"] = response_schema
+            generation_config["responseSchema"] = _legacy_schema(response_schema)
         payload = {
             "systemInstruction": {"parts": [{"text": system}]},
             "contents": contents,
@@ -347,7 +363,6 @@ Subject: {subject}\nTopic: {topic}\nDifficulty: {difficulty}
 Every question and correct answer must be directly supported by the source. Do not introduce outside facts. Use exactly four distinct options; correct_answer must exactly equal one option. Make distractors plausible but clearly wrong according to the source. Explanations must connect the answer to the source.
 Previously used questions to avoid:\n{excluded}\n\nSOURCE MATERIAL:\n{source}"""
         return await self._questions_from_prompt(prompt, subject, topic, "Material-based", difficulty)
-
 
 
 def get_provider() -> AIProvider:
