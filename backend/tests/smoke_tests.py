@@ -38,12 +38,23 @@ def run():
     assert "Binary search" in extract_text("lesson.txt", text.encode(), "text/plain")
     assert len(material_chunks(text, size=100, overlap=20)) > 1
     assert validate_igot_url("https://igotkarmayogi.gov.in/course/123").startswith("https://igotkarmayogi.gov.in")
+    try:
+        extract_text("lesson.exe", b"not supported", "application/octet-stream")
+        raise AssertionError("unsupported files must be rejected")
+    except ValueError as exc:
+        assert "Unsupported file type" in str(exc)
+    try:
+        extract_text("empty.txt", b"tiny", "text/plain")
+        raise AssertionError("empty documents must be rejected")
+    except ValueError as exc:
+        assert "enough readable text" in str(exc)
 
     provider = OpenAIResponsesProvider()
     assert provider.name == "openai"
 
     async def provider_check():
         async def fake_request(system, prompt, max_output_tokens=3500, tools=None, json_schema=None):
+            assert json_schema is not None
             return json.dumps({"questions": [{
                 "question": "Which condition does binary search require?",
                 "options": ["Sorted data", "Random data only", "An image", "A database server"],
@@ -78,12 +89,14 @@ def run():
 
     assert "Upload & Generate Quiz" in frontend_source
     assert "Import & Generate Quiz" in frontend_source
-    assert "await sendChat('Generate 5 MCQs with four options from this uploaded document. Use only the document as the source.',data.id)" in frontend_source
-    assert "await sendChat('Generate 5 MCQs with four options from this imported learning material. Use only the material as the source.',data.id)" in frontend_source
-    assert "const sendChat=async(prompt,forcedMaterialId=null)" in frontend_source
-    assert "const activeMaterialId=forcedMaterialId??materialId" in frontend_source
-    assert "material_id:activeMaterialId" in frontend_source
-    assert "if(data.quiz){setQuiz(data.quiz);setAnswers([]);setDone(false);setScore(null)}" in frontend_source
+    assert "materialQuestionCount" in frontend_source
+    assert "value={10}>10 questions" in frontend_source
+    assert "beginMaterialQuiz(data.id,materialQuestionCount)" in frontend_source
+    assert "const currentQuestion=quiz?.questions?.[quizIndex]" in frontend_source
+    assert "Next Question" in frontend_source
+    assert "Restart Quiz" in frontend_source
+    assert "currentCorrect" in frontend_source
+    assert "correct_answer" in (ROOT / "backend/app/openai_responses.py").read_text(encoding="utf-8")
 
     print("AI LearnMate backend/frontend smoke tests: PASS")
 
