@@ -3,8 +3,8 @@ from __future__ import annotations
 from datetime import datetime
 from io import BytesIO
 from pathlib import PurePosixPath
-from urllib.parse import urlparse
-from zipfile import ZipFile
+from urllib.parse import urljoin, urlparse
+from zipfile import BadZipFile, ZipFile
 import re
 import xml.etree.ElementTree as ET
 
@@ -35,6 +35,10 @@ Index("ix_learning_materials_learner_title", Material.learner_id, Material.title
 
 SUPPORTED_EXTENSIONS = {".pdf", ".txt", ".md", ".csv", ".json", ".html", ".htm", ".docx", ".pptx"}
 MAX_MATERIAL_BYTES = 12 * 1024 * 1024
+MAX_ARCHIVE_MEMBER_BYTES = 8 * 1024 * 1024
+MAX_ARCHIVE_TOTAL_BYTES = 24 * 1024 * 1024
+MAX_IGOT_REDIRECTS = 3
+ALLOWED_IGOT_HOST = "igotkarmayogi.gov.in"
 
 
 def _clean_html(text: str) -> str:
@@ -47,12 +51,18 @@ def _clean_html(text: str) -> str:
 def _xml_text(raw: bytes, tags: tuple[str, ...]) -> str:
     try:
         with ZipFile(BytesIO(raw)) as archive:
+            total_uncompressed = 0
             texts: list[str] = []
-            for name in archive.namelist():
-                if not any(marker in name for marker in tags):
+            for info in archive.infolist():
+                if not any(marker in info.filename for marker in tags):
                     continue
+                if info.file_size > MAX_ARCHIVE_MEMBER_BYTES:
+                    raise ValueError("The document contains an archive member that is too large to process safely.")
+                total_uncompressed += info.file_size
+                if total_uncompressed > MAX_ARCHIVE_TOTAL_BYTES:
+                    raise ValueError("The document expands beyond the safe processing limit.")
                 try:
-                    root = ET.fromstring(archive.read(name))
+                    root = ET.fromstring(archive.read(info))
                 except ET.ParseError:
                     continue
                 for node in root.iter():
@@ -60,7 +70,9 @@ def _xml_text(raw: bytes, tags: tuple[str, ...]) -> str:
                         if node.text and node.text.strip():
                             texts.append(node.text.strip())
             return " ".join(texts).strip()
-    except (OSError, ValueError, KeyError):
+    except ValueError:
+        raise
+    except (OSError, KeyError, BadZipFile):
         return ""
 
 
@@ -74,6 +86,8 @@ def extract_text(filename: str, raw: bytes, mime_type: str = "") -> str:
 
     try:
         if suffix == ".pdf":
+            if not raw.startswith(b"%PDF-"):
+                raise ValueError("The uploaded PDF file is invalid or unreadable.")
             try:
                 from pypdf import PdfReader
             except ImportError as exc:
@@ -81,10 +95,15 @@ def extract_text(filename: str, raw: bytes, mime_type: str = "") -> str:
             reader = PdfReader(BytesIO(raw))
             parts = [(page.extract_text() or "") for page in reader.pages]
             text = "\n".join(parts)
-        elif suffix == ".docx":
-            text = _xml_text(raw, ("word/document.xml",))
-        elif suffix == ".pptx":
-            text = _xml_text(raw, ("ppt/slides/", "ppt/notesSlides/"))
+        elif suffix in {".docx", ".pptx"}:
+            if not raw.startswith(b"PK"):
+                raise ValueError("The uploaded Office document is invalid or unreadable.")
+            text = _xml_text(
+                raw,
+                ("word/document.xml",)
+                if suffix == ".docx"
+                else ("ppt/slides/", "ppt/notesSlides/"),
+            )
         elif suffix in {".html", ".htm"}:
             text = _clean_html(raw.decode("utf-8", errors="ignore"))
         else:
@@ -160,18 +179,29 @@ def retrieve_material_context(text: str, query: str, limit: int = 24, max_chars:
 def validate_igot_url(url: str) -> str:
     parsed = urlparse(url.strip())
     host = (parsed.hostname or "").lower().rstrip(".")
-    if parsed.scheme not in {"http", "https"} or not host.endswith("igotkarmayogi.gov.in"):
+    allowed = host == ALLOWED_IGOT_HOST or host.endswith("." + ALLOWED_IGOT_HOST)
+    if parsed.scheme not in {"http", "https"} or not allowed:
         raise ValueError("Only official iGOT Karmayogi URLs are accepted.")
     return url.strip()
 
 
 async def import_igot_resource(url: str) -> tuple[str, str, str]:
-    url = validate_igot_url(url)
-    parsed = urlparse(url)
+    current_url = validate_igot_url(url)
+    async with httpx.AsyncClient(timeout=30, follow_redirects=False) as client:
+        for _ in range(MAX_IGOT_REDIRECTS + 1):
+            response = await client.get(current_url)
+            if response.status_code not in {301, 302, 303, 307, 308}:
+                response.raise_for_status()
+                break
+            location = response.headers.get("location")
+            if not location:
+                raise ValueError("The iGOT resource returned an invalid redirect.")
+            current_url = validate_igot_url(urljoin(current_url, location))
+        else:
+            raise ValueError("The iGOT resource redirected too many times.")
+
+    parsed = urlparse(current_url)
     filename = PurePosixPath(parsed.path).name or "igot-resource"
-    async with httpx.AsyncClient(timeout=30, follow_redirects=True) as client:
-        response = await client.get(url)
-        response.raise_for_status()
     content_type = response.headers.get("content-type", "").lower()
     raw = response.content
     if len(raw) > MAX_MATERIAL_BYTES:
@@ -186,7 +216,8 @@ async def import_igot_resource(url: str) -> tuple[str, str, str]:
 
     if len(text) < 80:
         raise ValueError("The iGOT URL did not expose enough readable public text. Download the official material and upload the file instead.")
-    title_match = re.search(r"(?is)<title[^>]*>(.*?)</title>", raw.decode("utf-8", errors="ignore"))
+    raw_text = raw.decode("utf-8", errors="ignore")
+    title_match = re.search(r"(?is)<title[^>]*>(.*?)</title>", raw_text)
     title = _clean_html(title_match.group(1)) if title_match else filename
     title = (title or filename or "iGOT learning resource")[:200]
     return title, text[:1_500_000], content_type or "text/plain"
