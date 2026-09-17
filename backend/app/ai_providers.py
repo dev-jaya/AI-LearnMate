@@ -52,12 +52,20 @@ QUESTION_TYPES = {
 
 DIFFICULTIES = {"easy", "medium", "hard"}
 
-# Google has retired older model access for some new users. This alias keeps
-# installations that still carry an older GEMINI_MODEL value from breaking.
+# Keep compatibility with stale deployments while using current Gemini models.
 MODEL_ALIASES = {
     "gemini-2.5-flash": "gemini-3.6-flash",
     "models/gemini-2.5-flash": "gemini-3.6-flash",
 }
+
+# Gemini-only failover order. A 429 on one model should not cause repeated
+# requests to the same exhausted model; another Gemini model can be tried once.
+GEMINI_MODEL_FALLBACKS = (
+    "gemini-3.8-flash",
+    "gemini-3.7-flash",
+    "gemini-3.5-flash",
+    "gemini-flash-lite-latest",
+)
 
 
 def _normalize(text: str) -> str:
@@ -246,6 +254,14 @@ class GeminiProvider(AIProvider):
             "x-goog-api-key": self.api_key,
         }
 
+    def _model_candidates(self) -> list[str]:
+        candidates: list[str] = []
+        for candidate in (self.model, *GEMINI_MODEL_FALLBACKS):
+            normalized = candidate.strip().removeprefix("models/")
+            if normalized and normalized not in candidates:
+                candidates.append(normalized)
+        return candidates
+
     @staticmethod
     def _response_text(data: dict[str, Any]) -> str:
         for step in data.get("steps", []) or []:
@@ -353,8 +369,12 @@ class GeminiProvider(AIProvider):
             data = await self._post_json(url, payload)
             if data is not None:
                 return data
+            # 429 means this model/quota is exhausted right now. Retrying the
+            # same request only adds pressure, so let model failover handle it.
+            if self.last_status_code == 429:
+                return None
             if (
-                self.last_status_code not in {429, 500, 502, 503, 504}
+                self.last_status_code not in {500, 502, 503, 504}
                 or attempt == attempts - 1
             ):
                 return None
@@ -374,7 +394,7 @@ class GeminiProvider(AIProvider):
             "system_instruction": system,
             "input": input_data,
             "generation_config": {
-                "max_output_tokens": 8192 if json_mode else 4096,
+                "max_output_tokens": 8192 if json_mode else 2048,
             },
         }
         if json_mode and response_schema:
@@ -404,7 +424,7 @@ class GeminiProvider(AIProvider):
         json_mode: bool = False,
     ) -> str | None:
         generation_config: dict[str, Any] = {
-            "maxOutputTokens": 8192 if json_mode else 4096,
+            "maxOutputTokens": 8192 if json_mode else 2048,
         }
         if json_mode:
             generation_config["responseMimeType"] = "application/json"
@@ -443,17 +463,50 @@ class GeminiProvider(AIProvider):
             self.last_error = "GEMINI_API_KEY is not configured"
             return None
 
-        result = await self._generate_interaction(
-            input_data, system, response_schema, json_mode
-        )
-        if result is not None:
-            return result
+        original_model = self.model
+        candidates = self._model_candidates()
 
-        # Only use the legacy endpoint for compatibility when the interaction
-        # request itself was rejected as an endpoint/schema mismatch.
-        if self.last_status_code not in {400, 404, 405}:
-            return None
+        for model in candidates:
+            self.model = model
+            result = await self._generate_interaction(
+                input_data, system, response_schema, json_mode
+            )
+            if result is not None:
+                return result
 
+            status = self.last_status_code
+            if status in {400, 404, 405}:
+                # Preserve the existing generateContent compatibility path.
+                legacy_result = await self._generate_legacy(
+                    self._legacy_contents(input_data),
+                    system,
+                    response_schema,
+                    json_mode,
+                )
+                if legacy_result is not None:
+                    return legacy_result
+                status = self.last_status_code
+
+            if status == 429:
+                if model != candidates[-1]:
+                    logger.warning(
+                        "Gemini quota/rate limit on model=%s; trying next Gemini model",
+                        model,
+                    )
+                    continue
+                return None
+
+            # Non-quota failures are not made worse by trying unrelated models.
+            if status not in {404, 405}:
+                return None
+
+        self.model = original_model
+        return None
+
+    @staticmethod
+    def _legacy_contents(
+        input_data: str | list[dict[str, Any]],
+    ) -> list[dict[str, Any]]:
         if isinstance(input_data, list):
             legacy_contents = []
             for item in input_data:
@@ -473,14 +526,8 @@ class GeminiProvider(AIProvider):
                     legacy_contents.append(
                         {"role": role, "parts": [{"text": text}]}
                     )
-        else:
-            legacy_contents = [
-                {"role": "user", "parts": [{"text": input_data}]}
-            ]
-
-        return await self._generate_legacy(
-            legacy_contents, system, response_schema, json_mode
-        )
+            return legacy_contents
+        return [{"role": "user", "parts": [{"text": input_data}]}]
 
     @staticmethod
     def _chat_system(context: dict[str, Any]) -> str:
