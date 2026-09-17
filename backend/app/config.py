@@ -9,9 +9,9 @@ class Settings(BaseSettings):
     """
 
     gemini_api_key: str = ""
-    # Gemini 3.6 Flash is a current stable model for new users. Keep the
-    # provider layer defensive as older environment values may still exist.
-    gemini_model: str = "gemini-3.6-flash"
+    # Gemini 3.8 Flash is the current primary model for the assistant.
+    # Render can still override this value through GEMINI_MODEL.
+    gemini_model: str = "gemini-3.8-flash"
     gemini_base_url: str = "https://generativelanguage.googleapis.com/v1beta"
     database_url: str = "sqlite:///./ai_learnmate.db"
     frontend_origins: str = (
