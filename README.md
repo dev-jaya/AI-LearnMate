@@ -16,8 +16,9 @@ AI LearnMate is an AI-enabled learning platform for personalized training, compe
 - General questions and concept explanations
 - Programming and engineering doubt solving
 - Code explanation, debugging and corrected examples
-- Exam-ready answers for short, 5-mark and 10-mark questions
-- Practical learning, project, study and next-step suggestions
+- Exam-ready answers for 2-mark, 5-mark and 10-mark requests
+- Telugu + English explanations when requested
+- Practical learning, project, interview, viva, hackathon and study guidance
 - Learning-progress and recent-activity review using application-provided data only
 - Conversational history with persistent database storage
 - Material-grounded assistance for uploaded or imported learning content
@@ -42,6 +43,7 @@ The current demo implements a safe **public-resource connector**: users can past
 - Backend: Python + FastAPI
 - Database: SQLite by default; PostgreSQL can be substituted later
 - AI: Google Gemini API through a backend provider abstraction
+- Current default AI model: `gemini-3.6-flash`
 - Material extraction: pypdf plus built-in DOCX/PPTX/XML and text extraction
 - Analytics: mastery scoring, weak-topic detection and recommendations
 
@@ -74,9 +76,10 @@ Open the Vite URL, normally http://localhost:5173.
 Backend `.env` / Render environment:
 ```env
 GEMINI_API_KEY=your_server_side_key
-GEMINI_MODEL=gemini-2.5-flash
+GEMINI_MODEL=gemini-3.6-flash
 GEMINI_BASE_URL=https://generativelanguage.googleapis.com/v1beta
 DATABASE_URL=sqlite:///./ai_learnmate.db
+FRONTEND_ORIGINS=http://localhost:5173,http://localhost:5500,http://127.0.0.1:5173,http://127.0.0.1:5500,https://ai-learnmate-frontend.onrender.com
 ```
 
 The API key must remain server-side. Never put it in browser code or Vite environment variables.
