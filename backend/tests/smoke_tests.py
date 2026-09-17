@@ -45,7 +45,7 @@ def run():
     provider = GeminiProvider(api_key="test-key", model="test-model")
     assert provider.name == "gemini"
     assert get_provider().name == "gemini"
-    assert settings.gemini_model == "gemini-3.6-flash"
+    assert settings.gemini_model == "gemini-3.8-flash"
     assert GeminiProvider(api_key="test-key", model="gemini-2.5-flash").model == "gemini-3.6-flash"
     assert GeminiProvider(api_key="test-key", model="models/gemini-2.5-flash").model == "gemini-3.6-flash"
     assert MCQ_SCHEMA["type"] == "object"
