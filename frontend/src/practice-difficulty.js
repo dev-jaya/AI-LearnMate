@@ -14,6 +14,14 @@
     selectedDifficulty = 'adaptive';
   }
 
+  const style = document.createElement('style');
+  style.textContent = `
+    .practice-difficulty-wrap{display:block;margin:0 0 12px}
+    .practice-difficulty-wrap>span{display:block;margin:0 0 6px;color:#8195a5;font-size:11px;font-weight:700;letter-spacing:.4px}
+    .practice-difficulty-wrap>select{width:100%;margin:0!important}
+  `;
+  document.head.appendChild(style);
+
   // Intercept only the subject-practice request. The protected AI Assistant
   // /api/chat route and its payload are left untouched.
   const originalFetch = window.fetch.bind(window);
