@@ -156,7 +156,6 @@ class AIProvider(ABC):
 
 MCQ_SCHEMA = {
     "type": "object",
-    "additionalProperties": False,
     "properties": {
         "questions": {
             "type": "array",
@@ -164,7 +163,6 @@ MCQ_SCHEMA = {
             "maxItems": 20,
             "items": {
                 "type": "object",
-                "additionalProperties": False,
                 "properties": {
                     "question": {"type": "string"},
                     "options": {
