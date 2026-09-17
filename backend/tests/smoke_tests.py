@@ -162,6 +162,12 @@ def run():
     frontend_source = (
         ROOT / "frontend/src/main.jsx"
     ).read_text(encoding="utf-8")
+    frontend_index = (
+        ROOT / "frontend/index.html"
+    ).read_text(encoding="utf-8")
+    difficulty_source = (
+        ROOT / "frontend/src/practice-difficulty.js"
+    ).read_text(encoding="utf-8")
 
     assert "provider.generate_material_questions" in backend_source
     assert '@app.get("/api/conversations/{learner_id}")' in backend_source
@@ -201,7 +207,21 @@ def run():
         "const activeMaterialId=forcedMaterialId??materialId" in frontend_source
         and "material_id:activeMaterialId" in frontend_source
     )
-    print("AI LearnMate Gemini assistant smoke tests: PASS")
+
+    assert "/src/practice-difficulty.js" in frontend_index
+    assert frontend_index.index("practice-difficulty.js") < frontend_index.index("main.jsx")
+    for contract in [
+        "assessment/start",
+        "practice-difficulty-wrap",
+        "Practice difficulty",
+        "['easy', 'Easy']",
+        "['medium', 'Medium']",
+        "['hard', 'Difficult']",
+        "/api/chat",
+    ]:
+        assert contract in difficulty_source, contract
+
+    print("AI LearnMate Gemini assistant + MCQ smoke tests: PASS")
 
 
 if __name__ == "__main__":
