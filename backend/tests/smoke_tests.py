@@ -182,7 +182,7 @@ def run():
     assert "response_format" in provider_source and "x-goog-api-key" in provider_source
     assert "/health/ai/probe" in backend_source
     assert "Api-Revision" in provider_source
-    assert "gemini-3.8-flash" in provider_source
+    assert "gemini-3.8-flash" in config_source
     assert "google import genai" in provider_source
 
     for contract in [
