@@ -20,6 +20,7 @@ jobs:
       - run: pip install -r requirements.txt
       - run: python -m compileall -q app tests
       - run: python tests/smoke_tests.py
+      - run: python -m pytest -q tests
       - run: python -c "from app.main import app; print(app.title, len(app.routes))"
 
   frontend:
