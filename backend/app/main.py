@@ -7,6 +7,7 @@ import math
 import re
 import uuid
 import random
+import time
 
 from .db import Base, engine, get_db
 from .config import settings
@@ -22,9 +23,12 @@ from .models import (
     Subject,
     Topic,
     QuizQuestion,
+    MaterialChunk,
 )
 from .materials import (
     Material,
+    extract_segments,
+    material_chunk_records,
     extract_text,
     retrieve_material_context,
     import_igot_resource,
