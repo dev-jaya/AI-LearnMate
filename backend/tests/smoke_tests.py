@@ -165,6 +165,7 @@ def run():
         def close(self):
             pass
 
+    provider.api_key = "test-key"
     provider._client = lambda: FakeClient()
     assert asyncio.run(provider._sdk_create(
         model="gemini-3.8-flash",
