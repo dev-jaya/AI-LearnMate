@@ -35,3 +35,28 @@ jobs:
           node-version: '20'
       - run: npm ci
       - run: npm run build
+
+  production_e2e:
+    if: github.head_ref == 'verification/live-production-smoke'
+    needs: [backend, frontend]
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run production HTTP smoke
+        env:
+          BACKEND_URL: https://ai-learnmate-backend.onrender.com
+          FRONTEND_URL: https://ai-learnmate-frontend.onrender.com
+          EXPECTED_VERSION: "1.5.0"
+        run: python .github/scripts/production_smoke.py
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+      - name: Install Playwright
+        run: npm install --no-save playwright@latest
+      - name: Install Chromium
+        run: npx playwright install --with-deps chromium
+      - name: Run production browser smoke
+        env:
+          FRONTEND_URL: https://ai-learnmate-frontend.onrender.com
+        run: node .github/scripts/browser_smoke.mjs
