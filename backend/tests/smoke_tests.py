@@ -150,6 +150,33 @@ def run():
     assert provider._category(404, "model not found") == "model_not_found"
     assert provider._category(500, "server error") == "service_unavailable"
 
+    sdk_capture = {}
+
+    class FakeInteractions:
+        def create(self, **kwargs):
+            sdk_capture.update(kwargs)
+            class Result:
+                id = "test-interaction-id"
+                output_text = "5"
+            return Result()
+
+    class FakeClient:
+        def __init__(self):
+            self.interactions = FakeInteractions()
+        def close(self):
+            pass
+
+    provider._client = lambda: FakeClient()
+    assert asyncio.run(provider._sdk_create(
+        model="gemini-3.8-flash",
+        input_data="2+3",
+        system="Reply with the answer.",
+        store=False,
+    )) == "5"
+    assert sdk_capture["model"] == "gemini-3.8-flash"
+    assert sdk_capture["input"] == "2+3"
+    assert sdk_capture["store"] is False
+
     async def provider_checks():
         captured = {}
 
