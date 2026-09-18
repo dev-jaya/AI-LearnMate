@@ -136,6 +136,7 @@ def run():
                             "subject": "Algorithms",
                             "topic": "Binary Search",
                             "subtopic": "Searching",
+                            "source_evidence": "Binary search works on sorted data by repeatedly checking the middle element",
                         }
                     ]
                 }
