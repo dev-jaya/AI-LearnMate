@@ -55,8 +55,7 @@ QUESTION_TYPES = {
 DIFFICULTIES = {"easy", "medium", "hard"}
 
 GEMINI_MODEL_FALLBACKS: tuple[str, ...] = (
-    "gemini-3.5-flash",
-    "gemini-2.5-flash",
+    "gemini-2.5-flash-lite",
     "gemini-3.7-flash",
 )
 
