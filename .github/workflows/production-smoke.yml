@@ -12,7 +12,8 @@ jobs:
     if: >-
       ${{ (github.event_name == 'workflow_run' &&
             github.event.workflow_run.conclusion == 'success' &&
-            github.event.workflow_run.head_branch == 'main') ||
+            (github.event.workflow_run.head_branch == 'main' ||
+             github.event.workflow_run.head_branch == 'verification/production-e2e')) ||
           (github.event_name == 'issue_comment' &&
             !github.event.issue.pull_request &&
             startsWith(github.event.comment.body, '/run-production-smoke')) }}
