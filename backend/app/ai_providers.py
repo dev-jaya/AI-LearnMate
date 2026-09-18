@@ -54,7 +54,7 @@ QUESTION_TYPES = {
 
 DIFFICULTIES = {"easy", "medium", "hard"}
 
-GEMINI_MODEL_FALLBACKS: tuple[str, ...] = ()
+GEMINI_MODEL_FALLBACKS: tuple[str, ...] = (\n    "gemini-3.7-flash",\n    "gemini-3.6-flash",\n    "gemini-3.5-flash",\n    "gemini-2.5-flash",\n)
 
 
 def _normalize(text: str) -> str:
@@ -392,11 +392,16 @@ class SdkGeminiProvider(AIProvider):
         self.last_interaction_id = None
 
     def _client(self):
+        base_url = self.base_url
+        for suffix in ("/v1beta", "/v1"):
+            if base_url.endswith(suffix):
+                base_url = base_url[: -len(suffix)].rstrip("/")
+                break
         return genai.Client(
             api_key=self.api_key,
             http_options={
-                "api_version": "v1beta",
-                "base_url": self.base_url,
+                "api_version": "v1",
+                "base_url": base_url,
                 "timeout": 90000,
             },
         )
@@ -474,6 +479,64 @@ class SdkGeminiProvider(AIProvider):
             self.last_status_code = None
             return None
 
+        models_to_try = [model] + [
+            fallback for fallback in GEMINI_MODEL_FALLBACKS
+            if fallback and fallback != model
+        ]
+
+        last_exception = None
+        for candidate_model in models_to_try:
+            try:
+                if candidate_model != model:
+                    logger.warning(
+                        "Gemini primary model unavailable; trying fallback model=%s",
+                        candidate_model,
+                    )
+                interaction = await asyncio.to_thread(
+                    lambda: self._sdk_create_once(
+                        candidate_model,
+                        input_data,
+                        system,
+                        response_schema,
+                        previous_interaction_id,
+                        json_mode,
+                        store,
+                    )
+                )
+                output = self._output_text(interaction)
+                if not output:
+                    self.last_status_code = 502
+                    self.last_error = "Gemini returned no text output."
+                    self.last_error_category = "invalid_response"
+                    return None
+                self.last_status_code = 200
+                self.last_error = ""
+                self.last_error_category = ""
+                self.last_interaction_id = getattr(interaction, "id", None)
+                if candidate_model != self.model:
+                    logger.info(
+                        "Gemini fallback succeeded model=%s primary=%s",
+                        candidate_model,
+                        self.model,
+                    )
+                return output
+            except Exception as exc:
+                last_exception = exc
+                self._remember_error(exc, candidate_model)
+                if self.last_status_code != 404:
+                    break
+
+        return None
+    def _sdk_create_once(
+        self,
+        model,
+        input_data,
+        system,
+        response_schema,
+        previous_interaction_id,
+        json_mode,
+        store,
+    ):
         kwargs = {
             "model": model,
             "input": input_data,
@@ -493,32 +556,15 @@ class SdkGeminiProvider(AIProvider):
         else:
             kwargs["generation_config"] = {"max_output_tokens": 4096}
 
-        def run():
-            client = self._client()
-            try:
-                return client.interactions.create(**kwargs)
-            finally:
-                try:
-                    client.close()
-                except Exception:
-                    pass
-
+        client = self._client()
         try:
-            interaction = await asyncio.to_thread(run)
-            output = self._output_text(interaction)
-            if not output:
-                self.last_status_code = 502
-                self.last_error = "Gemini returned no text output."
-                self.last_error_category = "invalid_response"
-                return None
-            self.last_status_code = 200
-            self.last_error = ""
-            self.last_error_category = ""
-            self.last_interaction_id = getattr(interaction, "id", None)
-            return output
-        except Exception as exc:
-            self._remember_error(exc, model)
-            return None
+            return client.interactions.create(**kwargs)
+        finally:
+            try:
+                client.close()
+            except Exception:
+                pass
+
     async def _generate(
         self,
         input_data,
@@ -537,41 +583,6 @@ class SdkGeminiProvider(AIProvider):
             previous_interaction_id=previous_interaction_id,
             json_mode=json_mode,
             store=store,
-        )
-    async def chat(self, message, context):
-        history = []
-        for item in context.get("conversation", [])[-12:]:
-            content = str(item.get("content", "")).strip()
-            if not content:
-                continue
-            history.append(
-                {
-                    "type": "user_input" if item.get("role") == "user" else "model_output",
-                    "content": [{"type": "text", "text": content}],
-                }
-            )
-
-        # The API persists the current user message before calling the provider.
-        # Treat that last persisted message as the current turn and do not append
-        # a second copy of it.
-        if history and (
-            history[-1].get("type") == "user_input"
-            and history[-1].get("content", [{}])[0].get("text") == message
-        ):
-            pass
-        else:
-            history.append(
-                {
-                    "type": "user_input",
-                    "content": [{"type": "text", "text": message}],
-                }
-            )
-
-        return await self._generate(
-            history,
-            self._chat_system(context),
-            previous_interaction_id=None,
-            store=False,
         )
 
 
