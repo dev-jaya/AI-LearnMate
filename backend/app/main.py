@@ -348,9 +348,11 @@ def store_questions(
     questions: list[dict],
     topic: str,
     difficulty: str,
+    material_id: int | None = None,
 ) -> Quiz:
     quiz = Quiz(
         learner_id=learner_id,
+        material_id=material_id,
         topic=topic,
         difficulty=difficulty,
         questions_json=json.dumps(questions),
@@ -359,9 +361,25 @@ def store_questions(
     db.flush()
 
     for position, question in enumerate(questions):
+        duplicate = (
+            db.query(LearnerQuestionHistory)
+            .filter(
+                LearnerQuestionHistory.learner_id == learner_id,
+                LearnerQuestionHistory.fingerprint == question["fingerprint"],
+            )
+            .first()
+        )
+        if duplicate:
+            db.rollback()
+            raise HTTPException(
+                409,
+                "A duplicate question was detected while saving the quiz. Please regenerate.",
+            )
+
         stored = GeneratedQuestion(
             public_id=question["id"],
             learner_id=learner_id,
+            material_id=material_id,
             subject=question["subject"],
             topic=question["topic"],
             subtopic=question["subtopic"],
@@ -409,14 +427,11 @@ def _previous_questions(
     learner_id: int,
     topic: str,
     db: Session,
-    limit: int = 100,
+    limit: int = 500,
 ) -> list[str]:
     rows = (
         db.query(GeneratedQuestion)
-        .filter(
-            GeneratedQuestion.learner_id == learner_id,
-            GeneratedQuestion.topic == topic,
-        )
+        .filter(GeneratedQuestion.learner_id == learner_id)
         .order_by(GeneratedQuestion.created_at.desc())
         .limit(limit)
         .all()
