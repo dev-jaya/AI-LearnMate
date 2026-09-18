@@ -226,6 +226,9 @@ def safe_gemini_failure(provider, default_message: str) -> HTTPException:
     status = provider.last_status_code
     detail = (provider.last_error or "").strip()
 
+    if not provider.api_key or "GEMINI_API_KEY is not configured" in detail:
+        return HTTPException(503, "Gemini is not configured on the server. Set GEMINI_API_KEY in Render/server environment settings.")
+
     if status == 429:
         message = "Gemini rate/quota limit was reached. Wait a little and try again."
         return HTTPException(429, message)
