@@ -407,7 +407,8 @@ class SdkGeminiProvider(AIProvider):
             http_options={
                 "api_version": "v1",
                 "base_url": base_url,
-                "timeout": 90000,
+                "timeout": 30000,
+                "retry_options": {"attempts": 1},
             },
         )
 
@@ -528,7 +529,7 @@ class SdkGeminiProvider(AIProvider):
             except Exception as exc:
                 last_exception = exc
                 self._remember_error(exc, candidate_model)
-                if self.last_status_code != 404:
+                if self.last_status_code not in (404, 429):
                     break
 
         return None
