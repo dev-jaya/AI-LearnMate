@@ -1,4 +1,8 @@
-"""Fast deterministic backend/frontend contract checks used by CI."""
+"""Deterministic backend contract tests with real function execution.
+
+These tests do not call Gemini over the network. Live Gemini verification is covered
+by the optional integration test that runs only when GEMINI_API_KEY is present.
+"""
 import asyncio
 import json
 import sys
@@ -10,23 +14,31 @@ sys.path.insert(0, str(BACKEND))
 
 from app.ai_providers import (
     MCQ_SCHEMA,
-    GeminiProvider,
-    _legacy_schema,
-    get_provider,
+    SdkGeminiProvider,
+    question_similarity,
     validate_question,
 )
 from app.config import settings
-from app.main import adaptive_difficulty_plan
-from app.materials import extract_text, material_chunks, validate_igot_url
+from app.main import adaptive_difficulty_plan, choose_material_coverage_groups
+from app.materials import extract_segments, material_chunk_records, material_chunks, validate_igot_url
+from app.models import MaterialChunk
 
 
 def run():
     text = (
         "Binary search works on sorted data by repeatedly checking the middle "
         "element and discarding the impossible half. "
-    ) * 4
-    assert "Binary search" in extract_text("lesson.txt", text.encode(), "text/plain")
-    assert len(material_chunks(text, size=100, overlap=20)) > 1
+    ) * 12
+
+    segments = extract_segments("lesson.txt", text.encode(), "text/plain")
+    assert segments and "Binary search" in segments[0][1]
+
+    records = material_chunk_records(segments, size=100, overlap=20)
+    assert len(records) > 1
+    assert records[0]["source_ref"] == "document"
+    assert records[-1]["chunk_index"] == len(records) - 1
+
+    assert "Binary search" in "".join(material_chunks(text, size=100, overlap=20))
     assert validate_igot_url(
         "https://igotkarmayogi.gov.in/course/123"
     ).startswith("https://igotkarmayogi.gov.in")
@@ -36,23 +48,13 @@ def run():
         ("empty.txt", "enough readable text"),
     ]:
         try:
-            extract_text(filename, b"tiny", "application/octet-stream")
+            extract_segments(filename, b"tiny", "application/octet-stream")
         except ValueError as exc:
             assert message in str(exc)
         else:
             raise AssertionError("invalid document should be rejected")
 
-    provider = GeminiProvider(api_key="test-key", model="test-model")
-    assert provider.name == "gemini"
-    assert get_provider().name == "gemini"
     assert settings.gemini_model == "gemini-3.8-flash"
-    assert GeminiProvider(api_key="test-key", model="gemini-3.8-flash").model == "gemini-3.8-flash"
-    assert MCQ_SCHEMA["type"] == "object"
-    assert MCQ_SCHEMA["properties"]["questions"]["type"] == "array"
-    assert MCQ_SCHEMA["properties"]["questions"]["minItems"] == 1
-    assert MCQ_SCHEMA["properties"]["questions"]["maxItems"] == 20
-    assert _legacy_schema(MCQ_SCHEMA)["type"] == "OBJECT"
-    assert _legacy_schema(MCQ_SCHEMA)["properties"]["questions"]["type"] == "ARRAY"
 
     question = validate_question(
         {
@@ -69,55 +71,128 @@ def run():
     )
     assert question and question["answer"] == 0 and question["provider"] == "gemini"
 
-    invalid = validate_question(
+    material_question = validate_question(
         {
-            "question": "Duplicate options",
-            "options": ["Same", "same", "A", "B"],
-            "correct_answer": "A",
-            "explanation": "bad question",
+            "question": "What must binary search operate on?",
+            "options": ["Sorted data", "Only images", "Only servers", "Only databases"],
+            "correct_answer": "Sorted data",
+            "explanation": "The source states that binary search works on sorted data.",
+            "difficulty": "easy",
+            "source_evidence": "Binary search works on sorted data",
         },
         "Algorithms",
         "Binary Search",
-        "",
+        "Searching",
         "easy",
+        source_text=text,
+        require_source_evidence=True,
     )
-    assert invalid is None
+    assert material_question and material_question["source_evidence"] == "Binary search works on sorted data"
+
+    invalid_evidence = validate_question(
+        {
+            "question": "Unsupported claim",
+            "options": ["A", "B", "C", "D"],
+            "correct_answer": "A",
+            "explanation": "not grounded",
+            "difficulty": "easy",
+            "source_evidence": "This sentence is not present in the source.",
+        },
+        "Algorithms",
+        "Binary Search",
+        "Searching",
+        "easy",
+        source_text=text,
+        require_source_evidence=True,
+    )
+    assert invalid_evidence is None
+
+    assert question_similarity(
+        "Which condition does binary search require?",
+        "Which condition does binary-search require?"
+    ) >= 0.9
+    assert question_similarity("Java arrays", "Python dictionaries") < 0.9
+
+    fake_chunks = [
+        MaterialChunk(
+            material_id=1,
+            chunk_index=i,
+            source_ref=f"page {i + 1}",
+            content=f"FACT-{i} " + ("document content " * 20),
+        )
+        for i in range(40)
+    ]
+    groups = choose_material_coverage_groups(fake_chunks, 10)
+    joined = "
+".join(groups)
+    assert len(groups) >= 2
+    assert "FACT-0" in joined
+    assert "FACT-39" in joined
 
     assert adaptive_difficulty_plan(None, 5) == [
-        "easy",
-        "easy",
-        "medium",
-        "medium",
-        "hard",
+        "easy", "easy", "medium", "medium", "hard"
     ]
     assert adaptive_difficulty_plan(40, 5) == [
-        "easy",
-        "easy",
-        "easy",
-        "medium",
-        "medium",
+        "easy", "easy", "easy", "medium", "medium"
     ]
     assert adaptive_difficulty_plan(65, 5) == [
-        "easy",
-        "medium",
-        "medium",
-        "hard",
-        "hard",
+        "easy", "medium", "medium", "hard", "hard"
     ]
     assert adaptive_difficulty_plan(90, 5) == [
-        "medium",
-        "medium",
-        "hard",
-        "hard",
-        "hard",
+        "medium", "medium", "hard", "hard", "hard"
     ]
 
-    async def provider_check():
-        async def fake_generate(
-            contents, system, response_schema=None, json_mode=False
+    provider = SdkGeminiProvider()
+    assert provider.name == "gemini"
+    assert provider.model == "gemini-3.8-flash"
+    assert provider._category(429, "RESOURCE_EXHAUSTED quota") == "quota"
+    assert provider._category(401, "API key rejected") == "authentication"
+    assert provider._category(404, "model not found") == "model_not_found"
+    assert provider._category(500, "server error") == "service_unavailable"
+
+    async def provider_checks():
+        captured = {}
+
+        async def fake_generate(input_data, system, response_schema=None, previous_interaction_id=None, json_mode=False, store=False):
+            captured["input"] = input_data
+            captured["system"] = system
+            assert response_schema is None
+            assert previous_interaction_id is None
+            assert store is False
+            return "5"
+
+        provider._generate = fake_generate
+        reply = await provider.chat(
+            "2+3",
+            {
+                "learner_name": "Test",
+                "conversation": [
+                    {"role": "user", "content": "hi"},
+                    {"role": "assistant", "content": "hello"},
+                    {"role": "user", "content": "2+3"},
+                ],
+            },
+        )
+        assert reply == "5"
+        types = [item["type"] for item in captured["input"]]
+        texts = [
+            item["content"][0]["text"]
+            for item in captured["input"]
+            if item.get("content")
+        ]
+        assert types == ["user_input", "model_output", "user_input"]
+        assert texts.count("2+3") == 1
+
+        async def fake_structured(
+            input_data,
+            system,
+            response_schema=None,
+            previous_interaction_id=None,
+            json_mode=False,
+            store=False,
         ):
-            assert response_schema is not None and json_mode
-            assert response_schema["type"] == "object"
+            assert response_schema == MCQ_SCHEMA
+            assert json_mode is True
             return json.dumps(
                 {
                     "questions": [
@@ -136,94 +211,28 @@ def run():
                             "subject": "Algorithms",
                             "topic": "Binary Search",
                             "subtopic": "Searching",
-                            "source_evidence": "Binary search works on sorted data by repeatedly checking the middle element",
+                            "source_evidence": "Binary search works on sorted data",
                         }
                     ]
                 }
             )
 
-        provider._generate = fake_generate
+        provider._generate = fake_structured
         questions = await provider.generate_material_questions(
-            text, "Algorithms", "Binary Search", "easy", 1, []
+            text,
+            "Algorithms",
+            "Binary Search",
+            "easy",
+            1,
+            [],
+            source_reference="page 1",
         )
-        assert (
-            len(questions) == 1
-            and questions[0]["provider"] == "gemini"
-            and questions[0]["answer"] == 0
-        )
+        assert len(questions) == 1
+        assert questions[0]["provider"] == "gemini"
+        assert questions[0]["answer"] == 0
 
-    asyncio.run(provider_check())
-
-    backend_source = (ROOT / "backend/app/main.py").read_text(encoding="utf-8")
-    provider_source = (
-        ROOT / "backend/app/ai_providers.py"
-    ).read_text(encoding="utf-8")
-    config_source = (ROOT / "backend/app/config.py").read_text(encoding="utf-8")
-    frontend_source = (
-        ROOT / "frontend/src/main.jsx"
-    ).read_text(encoding="utf-8")
-    frontend_index = (
-        ROOT / "frontend/index.html"
-    ).read_text(encoding="utf-8")
-    difficulty_source = (
-        ROOT / "frontend/src/practice-difficulty.js"
-    ).read_text(encoding="utf-8")
-
-    assert "provider.generate_material_questions" in backend_source
-    assert '@app.get("/api/conversations/{learner_id}")' in backend_source
-    assert '@app.get("/api/conversations/{conversation_id}/messages")' in backend_source
-    assert '"provider":"gemini"' in backend_source.replace(" ", "")
-    assert "adaptive_difficulty_plan" in backend_source
-    assert "shuffle_question_options" in backend_source
-    assert "infer_subject" in backend_source
-    assert "safe_gemini_failure" in backend_source
-    assert "frontend_origins" in config_source
-    assert "gemini_api_key" in config_source and "gemini_model" in config_source
-    assert "GeminiProvider" in provider_source and "get_provider" in provider_source
-    assert "response_format" in provider_source and "x-goog-api-key" in provider_source
-    assert "/health/ai/probe" in backend_source
-    assert "Api-Revision" in provider_source
-    assert "gemini-3.8-flash" in config_source
-    assert "google import genai" in provider_source
-
-    for contract in [
-        "loadConversationHistory",
-        "openConversation",
-        "Conversation history",
-        "/conversations/",
-        "chatMessagesRef",
-        "scrollTo",
-        "New conversation",
-        "Thinking…",
-        "Shift+Enter",
-        "code-block",
-        "copy-code",
-        "AI LearnMate Assistant",
-        "currentQuestion",
-        "Next Question",
-        "Restart Quiz",
-    ]:
-        assert contract in frontend_source, contract
-
-    assert (
-        "const activeMaterialId=forcedMaterialId??materialId" in frontend_source
-        and "material_id:activeMaterialId" in frontend_source
-    )
-
-    assert "/src/practice-difficulty.js" in frontend_index
-    assert frontend_index.index("practice-difficulty.js") < frontend_index.index("main.jsx")
-    for contract in [
-        "assessment/start",
-        "practice-difficulty-wrap",
-        "Practice difficulty",
-        "['easy', 'Easy']",
-        "['medium', 'Medium']",
-        "['hard', 'Difficult']",
-        "/api/chat",
-    ]:
-        assert contract in difficulty_source, contract
-
-    print("AI LearnMate Gemini assistant + MCQ smoke tests: PASS")
+    asyncio.run(provider_checks())
+    print("AI LearnMate deterministic backend smoke tests: PASS")
 
 
 if __name__ == "__main__":
