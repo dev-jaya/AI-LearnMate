@@ -1109,6 +1109,7 @@ def tutor_context(
 
     context = {
         "learner_name": learner.name,
+        "gemini_interaction_id": conversation.gemini_interaction_id if "conversation" in locals() else None,
         "topic": topic,
         "mastery": mastery,
         "weak_topics": [
