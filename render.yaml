@@ -1,0 +1,41 @@
+services:
+  - type: web
+    name: ai-learnmate-backend
+    runtime: python
+    plan: free
+    region: ohio
+    branch: main
+    rootDir: backend
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT
+    autoDeploy: true
+    healthCheckPath: /health
+    envVars:
+      - key: GEMINI_API_KEY
+        sync: false
+      - key: GEMINI_MODEL
+        value: gemini-3.8-flash
+      - key: GEMINI_BASE_URL
+        value: https://generativelanguage.googleapis.com/v1beta
+      - key: DATABASE_URL
+        fromDatabase:
+          name: ai-learnmate-db
+          property: connectionString
+      - key: FRONTEND_ORIGINS
+        value: https://ai-learnmate-frontend.onrender.com
+
+  - type: static
+    name: ai-learnmate-frontend
+    branch: main
+    rootDir: frontend
+    buildCommand: npm install && npm run build
+    staticPublishPath: dist
+    envVars:
+      - key: VITE_API_URL
+        value: https://ai-learnmate-backend.onrender.com
+
+databases:
+  - name: ai-learnmate-db
+    plan: free
+    region: ohio
+    postgresMajorVersion: 18
