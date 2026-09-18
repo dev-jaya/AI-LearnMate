@@ -834,6 +834,17 @@ async def import_igot(
         extracted_text=content,
     )
     db.add(material)
+    db.flush()
+    chunk_rows = [
+        MaterialChunk(
+            material_id=material.id,
+            chunk_index=item["chunk_index"],
+            source_ref=item["source_ref"],
+            content=item["content"],
+        )
+        for item in material_chunk_records([("iGOT resource", content)])
+    ]
+    db.add_all(chunk_rows)
     db.commit()
     db.refresh(material)
     return {
@@ -842,6 +853,7 @@ async def import_igot(
         "source_type": "igot",
         "source_url": material.source_url,
         "characters": len(content),
+        "chunks": len(chunk_rows),
     }
 
 
