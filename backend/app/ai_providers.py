@@ -211,6 +211,7 @@ MCQ_SCHEMA = {
                     "subject",
                     "topic",
                     "subtopic",
+                    "source_evidence",
                 ],
             },
         }
