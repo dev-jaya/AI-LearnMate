@@ -767,7 +767,7 @@ async def upload_material(
 
     raw = await file.read()
     try:
-        content = extract_text(
+        segments = extract_segments(
             file.filename or "material.txt",
             raw,
             file.content_type or "",
@@ -775,6 +775,7 @@ async def upload_material(
     except ValueError as exc:
         raise HTTPException(400, str(exc)) from exc
 
+    content = "\n".join(text for _ref, text in segments)
     material = Material(
         learner_id=learner_id,
         title=(file.filename or "Learning material")[:200],
@@ -784,6 +785,17 @@ async def upload_material(
         extracted_text=content,
     )
     db.add(material)
+    db.flush()
+    chunk_rows = [
+        MaterialChunk(
+            material_id=material.id,
+            chunk_index=item["chunk_index"],
+            source_ref=item["source_ref"],
+            content=item["content"],
+        )
+        for item in material_chunk_records(segments)
+    ]
+    db.add_all(chunk_rows)
     db.commit()
     db.refresh(material)
     return {
@@ -792,6 +804,7 @@ async def upload_material(
         "filename": material.filename,
         "source_type": material.source_type,
         "characters": len(content),
+        "chunks": len(chunk_rows),
     }
 
 
