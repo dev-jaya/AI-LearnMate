@@ -230,8 +230,7 @@ class GeminiProvider(AIProvider):
     ):
         self.api_key = settings.gemini_api_key if api_key is None else api_key
         configured_model = model or settings.gemini_model
-        configured_model = configured_model.strip().removeprefix("models/")
-        self.model = MODEL_ALIASES.get(configured_model, configured_model)
+        self.model = configured_model.strip().removeprefix("models/")
         self.base_url = (base_url or settings.gemini_base_url).rstrip("/")
         self.last_error = ""
         self.last_status_code: int | None = None
