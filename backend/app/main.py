@@ -61,26 +61,63 @@ app.add_middleware(
 )
 
 
-def migrate_sqlite_columns():
-    if not str(engine.url).startswith("sqlite"):
-        return
-    columns = {item["name"] for item in inspect(engine).get_columns("generated_questions")}
+def migrate_database():
+    tables = set(inspect(engine).get_table_names())
     additions = {
-        "normalized_question": "TEXT NOT NULL DEFAULT ''",
-        "question_type": "VARCHAR(40) NOT NULL DEFAULT 'conceptual'",
+        "generated_questions": {
+            "normalized_question": "TEXT NOT NULL DEFAULT ''",
+            "question_type": "VARCHAR(40) NOT NULL DEFAULT 'conceptual'",
+            "material_id": "INTEGER",
+        },
+        "quizzes": {"material_id": "INTEGER"},
+        "conversations": {"gemini_interaction_id": "VARCHAR(160) DEFAULT ''"},
     }
     with engine.begin() as connection:
-        for name, definition in additions.items():
-            if name not in columns:
-                connection.execute(
-                    text(
-                        f"ALTER TABLE generated_questions "
-                        f"ADD COLUMN {name} {definition}"
+        for table, columns in additions.items():
+            if table not in tables:
+                continue
+            existing = {item["name"] for item in inspect(engine).get_columns(table)}
+            for name, definition in columns.items():
+                if name not in existing:
+                    connection.execute(
+                        text(f'ALTER TABLE "{table}" ADD COLUMN "{name}" {definition}')
                     )
+
+    with Session(bind=engine) as db:
+        duplicate_groups = (
+            db.query(
+                LearnerQuestionHistory.learner_id,
+                LearnerQuestionHistory.fingerprint,
+            )
+            .group_by(
+                LearnerQuestionHistory.learner_id,
+                LearnerQuestionHistory.fingerprint,
+            )
+            .having(text("COUNT(*) > 1"))
+            .all()
+        )
+        for learner_id, fingerprint in duplicate_groups:
+            rows = (
+                db.query(LearnerQuestionHistory)
+                .filter(
+                    LearnerQuestionHistory.learner_id == learner_id,
+                    LearnerQuestionHistory.fingerprint == fingerprint,
                 )
+                .order_by(LearnerQuestionHistory.id.asc())
+                .all()
+            )
+            for duplicate in rows[1:]:
+                db.delete(duplicate)
+        db.commit()
+
+    with engine.begin() as connection:
+        connection.execute(text(
+            "CREATE UNIQUE INDEX IF NOT EXISTS uq_question_history_learner_fingerprint "
+            "ON learner_question_history (learner_id, fingerprint)"
+        ))
 
 
-migrate_sqlite_columns()
+migrate_database()
 
 
 def seed_subject_catalog():
