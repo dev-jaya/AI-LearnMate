@@ -288,36 +288,41 @@ def infer_subject(message: str, default: str) -> str:
 def safe_gemini_failure(provider, default_message: str) -> HTTPException:
     status = provider.last_status_code
     detail = (provider.last_error or "").strip()
+    category = getattr(provider, "last_error_category", "")
 
-    if not provider.api_key or "GEMINI_API_KEY is not configured" in detail:
-        return HTTPException(503, "Gemini is not configured on the server. Set GEMINI_API_KEY in Render/server environment settings.")
-
-    if status == 429:
-        message = "Gemini rate/quota limit was reached. Wait a little and try again."
-        return HTTPException(429, message)
-    if status in {401, 403}:
+    if category == "configuration" or not provider.api_key:
         return HTTPException(
             503,
-            "Gemini authentication was rejected. Check the server-side GEMINI_API_KEY "
-            "and its Gemini API authorization/restrictions.",
+            "Gemini is not configured on the server. Set GEMINI_API_KEY in Render/server environment settings.",
         )
-    if status in {500, 502, 503, 504}:
+    if category == "authentication" or status in {401, 403}:
         return HTTPException(
             503,
-            "Gemini is temporarily unavailable. Please try again in a moment.",
+            "Gemini authentication failed. Check the server-side GEMINI_API_KEY and Google API authorization.",
         )
-    if status in {400, 404, 405}:
+    if category == "quota" or status == 429:
+        return HTTPException(
+            429,
+            "Gemini rate/quota limit reached. Wait and retry later, or check the Gemini project quota.",
+        )
+    if category == "model_not_found" or status == 404:
         return HTTPException(
             502,
-            "Gemini rejected the AI request. Please retry; if it continues, check the "
-            "configured Gemini model and API settings.",
+            f"Gemini model '{provider.model}' was rejected by the API.",
         )
-    if "timeout" in detail.lower():
+    if category == "blocked_response":
+        return HTTPException(502, "Gemini blocked the response for safety reasons.")
+    if category == "bad_request" or status in {400, 422}:
+        safe_detail = detail.replace(provider.api_key or "", "[REDACTED]")
+        return HTTPException(502, f"Gemini rejected the request. {safe_detail[:300]}")
+    if category == "timeout" or status == 504:
         return HTTPException(504, "Gemini took too long to respond. Please try again.")
-    if "network" in detail.lower():
+    if category == "network":
         return HTTPException(503, "The AI service could not be reached. Please try again.")
-    if detail and "GEMINI_API_KEY" not in detail:
-        return HTTPException(502, f"{default_message} Details: {detail}")
+    if category == "service_unavailable" or status in {500, 502, 503}:
+        return HTTPException(503, "Gemini is temporarily unavailable. Please try again.")
+    if detail:
+        return HTTPException(502, f"{default_message} Details: {detail[:300]}")
     return HTTPException(502, default_message)
 
 
