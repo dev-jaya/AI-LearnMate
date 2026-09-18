@@ -46,8 +46,7 @@ def run():
     assert provider.name == "gemini"
     assert get_provider().name == "gemini"
     assert settings.gemini_model == "gemini-3.8-flash"
-    assert GeminiProvider(api_key="test-key", model="gemini-2.5-flash").model == "gemini-3.6-flash"
-    assert GeminiProvider(api_key="test-key", model="models/gemini-2.5-flash").model == "gemini-3.6-flash"
+    assert GeminiProvider(api_key="test-key", model="gemini-3.8-flash").model == "gemini-3.8-flash"
     assert MCQ_SCHEMA["type"] == "object"
     assert MCQ_SCHEMA["properties"]["questions"]["type"] == "array"
     assert MCQ_SCHEMA["properties"]["questions"]["minItems"] == 1
@@ -181,8 +180,10 @@ def run():
     assert "gemini_api_key" in config_source and "gemini_model" in config_source
     assert "GeminiProvider" in provider_source and "get_provider" in provider_source
     assert "response_format" in provider_source and "x-goog-api-key" in provider_source
+    assert "/health/ai/probe" in backend_source
     assert "Api-Revision" in provider_source
-    assert "gemini-3.6-flash" in provider_source
+    assert "gemini-3.8-flash" in provider_source
+    assert "google import genai" in provider_source
 
     for contract in [
         "loadConversationHistory",
