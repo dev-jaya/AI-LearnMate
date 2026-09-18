@@ -223,15 +223,35 @@ def topics(db: Session = Depends(get_db)):
         .order_by(Subject.name)
         .all()
     )
-    return {
-        "topics": [record.name for record in records],
-        "subjects": [
+
+    # Always expose the complete application subject catalog in the UI,
+    # even when an older database is missing one or more seeded rows.
+    known = {record.name: record for record in records}
+    all_subjects = []
+    for subject_name in sorted(SUBJECTS, key=str.casefold):
+        record = known.get(subject_name)
+        all_subjects.append(
             {
-                "name": record.name,
-                "topics": [topic.name for topic in record.topics if topic.active],
+                "name": subject_name,
+                "topics": [topic.name for topic in record.topics if topic.active]
+                if record
+                else [],
             }
-            for record in records
-        ],
+        )
+
+    # Preserve any additional active subjects that may have been added locally.
+    for record in records:
+        if record.name not in {item["name"] for item in all_subjects}:
+            all_subjects.append(
+                {
+                    "name": record.name,
+                    "topics": [topic.name for topic in record.topics if topic.active],
+                }
+            )
+
+    return {
+        "topics": [item["name"] for item in all_subjects],
+        "subjects": all_subjects,
     }
 
 
