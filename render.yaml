@@ -24,7 +24,8 @@ services:
       - key: FRONTEND_ORIGINS
         value: https://ai-learnmate-frontend.onrender.com
 
-  - type: static
+  - type: web
+    runtime: static
     name: ai-learnmate-frontend
     branch: main
     rootDir: frontend
