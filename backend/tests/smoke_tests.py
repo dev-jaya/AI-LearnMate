@@ -191,9 +191,10 @@ def run():
         async def fake_generate(input_data, system, response_schema=None, previous_interaction_id=None, json_mode=False, store=False):
             captured["input"] = input_data
             captured["system"] = system
+            captured["previous_interaction_id"] = previous_interaction_id
+            captured["store"] = store
             assert response_schema is None
-            assert previous_interaction_id is None
-            assert store is False
+            assert json_mode is False
             return "5"
 
         provider._generate = fake_generate
@@ -209,14 +210,26 @@ def run():
             },
         )
         assert reply == "5"
-        types = [item["type"] for item in captured["input"]]
-        texts = [
-            item["content"][0]["text"]
-            for item in captured["input"]
-            if item.get("content")
-        ]
-        assert types == ["user_input", "model_output", "user_input"]
-        assert texts.count("2+3") == 1
+        assert captured["input"] == "2+3"
+        assert captured["previous_interaction_id"] is None
+        assert captured["store"] is True
+
+        captured.clear()
+        reply = await provider.chat(
+            "what was the previous answer?",
+            {
+                "learner_name": "Test",
+                "gemini_interaction_id": "prev-123",
+                "conversation": [
+                    {"role": "user", "content": "2+3"},
+                    {"role": "assistant", "content": "5"},
+                ],
+            },
+        )
+        assert reply == "5"
+        assert captured["input"] == "what was the previous answer?"
+        assert captured["previous_interaction_id"] == "prev-123"
+        assert captured["store"] is True
 
         async def fake_structured(
             input_data,
