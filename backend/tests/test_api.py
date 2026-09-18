@@ -9,6 +9,7 @@ from app import main
 from app.models import Learner
 from app.materials import Material
 from app.schemas import ChatRequest, QuizRequest
+from app.main import safe_gemini_failure
 
 
 class FakeProvider:
@@ -17,7 +18,7 @@ class FakeProvider:
     async def generate_questions(self,subject,topic,subtopic,difficulty,count,context): return self._questions(subject,topic,difficulty,count)
     async def generate_material_questions(self,material_text,subject,topic,difficulty,count,excluded_questions,source_reference="document"): return self._questions(subject,topic,difficulty,count)
     def _questions(self,subject,topic,difficulty,count):
-        return [{"id":f"test-{i}","subject":subject,"topic":topic,"subtopic":"Material-based","difficulty":difficulty,"question":f"What does the material explain in question {i}?","options":["The first concept","The second concept","The third concept","The fourth concept"],"answer":0,"correct_answer":0,"explanation":"The answer is stated in the supplied material.","fingerprint":f"test-fingerprint-{i}-{uuid4().hex}","question_type":"conceptual","provider":"gemini"} for i in range(count)]
+        return [{"id":f"test-{i}","subject":subject,"topic":topic,"subtopic":"Material-based","difficulty":difficulty,"question":f"What does the material explain in question {i}?","options":["The first concept","The second concept","The third concept","The fourth concept"],"answer":0,"correct_answer":0,"explanation":"The answer is stated in the supplied material.","source_evidence":"Binary search works on sorted data by repeatedly checking the middle element","fingerprint":f"test-fingerprint-{i}-{uuid4().hex}","question_type":"conceptual","provider":"gemini"} for i in range(count)]
 
 
 def _new_learner(db,prefix):
@@ -119,3 +120,21 @@ def test_chat_uses_persistent_gemini_interaction_id(monkeypatch):
         conversation = db.get(main.Conversation, response["conversation_id"])
         assert seen["interaction_id"] is None
         assert conversation.gemini_interaction_id == "interaction-test-123"
+
+
+
+def test_gemini_error_categories_are_safe(monkeypatch):
+    provider = FakeProvider()
+    for status, category, expected_status in [
+        (401, "authentication", 503),
+        (403, "authentication", 503),
+        (404, "model_not_found", 502),
+        (429, "quota", 429),
+        (500, "service_unavailable", 503),
+    ]:
+        provider.last_status_code = status
+        provider.last_error_category = category
+        provider.last_error = "secret-safe-error"
+        exc = safe_gemini_failure(provider, "default")
+        assert exc.status_code == expected_status
+        assert "test-key" not in str(exc.detail)
