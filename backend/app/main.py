@@ -146,7 +146,7 @@ def root():
 
 @app.get("/health")
 def health():
-    return {"status": "ok", "service": "ai-learnmate-api", "version": "1.4.0"}
+    return {"status": "ok", "service": "ai-learnmate-api", "version": "1.5.0"}
 
 
 @app.get("/health/ai")
