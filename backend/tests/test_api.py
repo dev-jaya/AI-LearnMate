@@ -12,10 +12,10 @@ from app.schemas import ChatRequest, QuizRequest
 
 
 class FakeProvider:
-    name="gemini"; model="test-model"; api_key="test-key"; last_error=""
+    name="gemini"; model="test-model"; api_key="test-key"; last_error=""; last_error_category=""; last_status_code=200; last_interaction_id=None
     async def chat(self,message,context): return f"Echo: {message}"
     async def generate_questions(self,subject,topic,subtopic,difficulty,count,context): return self._questions(subject,topic,difficulty,count)
-    async def generate_material_questions(self,material_text,subject,topic,difficulty,count,excluded_questions): return self._questions(subject,topic,difficulty,count)
+    async def generate_material_questions(self,material_text,subject,topic,difficulty,count,excluded_questions,source_reference="document"): return self._questions(subject,topic,difficulty,count)
     def _questions(self,subject,topic,difficulty,count):
         return [{"id":f"test-{i}","subject":subject,"topic":topic,"subtopic":"Material-based","difficulty":difficulty,"question":f"What does the material explain in question {i}?","options":["The first concept","The second concept","The third concept","The fourth concept"],"answer":0,"correct_answer":0,"explanation":"The answer is stated in the supplied material.","fingerprint":f"test-fingerprint-{i}-{uuid4().hex}","question_type":"conceptual","provider":"gemini"} for i in range(count)]
 
@@ -83,3 +83,39 @@ def test_material_upload_and_grounded_chat_context(monkeypatch):
         response=asyncio.run(main.chat(ChatRequest(learner_id=learner.id,message="Explain classes using my material",topic="Java",material_id=material.id),db))
         assert response["message"]["content"]=="Grounded response"
         assert "material_context" in captured and "Java classes" in captured["material_context"]
+
+
+def test_no_repeat_uses_learner_history(monkeypatch):
+    monkeypatch.setattr(main, "get_provider", lambda: FakeProvider())
+    with Session(bind=main.engine) as db:
+        learner = _new_learner(db, "CI-NoRepeat")
+        first = asyncio.run(main.generate_quiz(
+            QuizRequest(learner_id=learner.id, topic="Java", subject="Java", difficulty="easy", count=3),
+            db,
+        ))
+        second = asyncio.run(main.generate_quiz(
+            QuizRequest(learner_id=learner.id, topic="Python", subject="Python", difficulty="easy", count=3),
+            db,
+        ))
+        first_questions = {q["question"] for q in first["questions"]}
+        second_questions = {q["question"] for q in second["questions"]}
+        assert first_questions.isdisjoint(second_questions)
+
+
+def test_chat_uses_persistent_gemini_interaction_id(monkeypatch):
+    provider = FakeProvider()
+    seen = {}
+    async def chat(message, context):
+        seen["interaction_id"] = context.get("gemini_interaction_id")
+        provider.last_interaction_id = "interaction-test-123"
+        return "ok"
+    provider.chat = chat
+    monkeypatch.setattr(main, "get_provider", lambda: provider)
+    with Session(bind=main.engine) as db:
+        learner = _new_learner(db, "CI-State")
+        response = asyncio.run(main.chat(ChatRequest(
+            learner_id=learner.id, message="hi", topic="Java"
+        ), db))
+        conversation = db.get(main.Conversation, response["conversation_id"])
+        assert seen["interaction_id"] is None
+        assert conversation.gemini_interaction_id == "interaction-test-123"
