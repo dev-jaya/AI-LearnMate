@@ -42,9 +42,9 @@ The current demo implements a safe **public-resource connector**: users can past
 - Frontend: React + Vite
 - Backend: Python + FastAPI
 - Database: SQLite by default; PostgreSQL can be substituted later
-- AI: Google Gemini API through a backend provider abstraction
-- Current default AI model: `gemini-3.6-flash`
-- Material extraction: pypdf plus built-in DOCX/PPTX/XML and text extraction
+- AI: Google Gemini API through the official `google-genai` SDK and Interactions API
+- Current default AI model: `gemini-3.8-flash`
+- Material extraction: pypdf plus built-in DOCX/PPTX/XML and text extraction with document-wide chunk indexing and coverage
 - Analytics: mastery scoring, weak-topic detection and recommendations
 
 ## Run locally
@@ -76,7 +76,7 @@ Open the Vite URL, normally http://localhost:5173.
 Backend `.env` / Render environment:
 ```env
 GEMINI_API_KEY=your_server_side_key
-GEMINI_MODEL=gemini-3.6-flash
+GEMINI_MODEL=gemini-3.8-flash
 GEMINI_BASE_URL=https://generativelanguage.googleapis.com/v1beta
 DATABASE_URL=sqlite:///./ai_learnmate.db
 FRONTEND_ORIGINS=http://localhost:5173,http://localhost:5500,http://127.0.0.1:5173,http://127.0.0.1:5500,https://ai-learnmate-frontend.onrender.com
