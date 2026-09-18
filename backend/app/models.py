@@ -53,6 +53,7 @@ class Quiz(Base):
     __tablename__ = "quizzes"
     id = Column(Integer, primary_key=True)
     learner_id = Column(Integer, ForeignKey("learners.id"), nullable=False)
+    material_id = Column(Integer, ForeignKey("learning_materials.id"), nullable=True, index=True)
     topic = Column(String(120), nullable=False)
     difficulty = Column(String(30), nullable=False)
     questions_json = Column(Text, nullable=False)
@@ -84,6 +85,7 @@ class Conversation(Base):
     __tablename__ = "conversations"
     id = Column(Integer, primary_key=True)
     learner_id = Column(Integer, ForeignKey("learners.id"), nullable=False, index=True)
+    gemini_interaction_id = Column(String(160), default="", nullable=False, index=True)
     topic = Column(String(120), default="", nullable=False)
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
@@ -111,6 +113,7 @@ class GeneratedQuestion(Base):
     id = Column(Integer, primary_key=True)
     public_id = Column(String(80), unique=True, nullable=False, index=True)
     learner_id = Column(Integer, ForeignKey("learners.id"), nullable=True, index=True)
+    material_id = Column(Integer, ForeignKey("learning_materials.id"), nullable=True, index=True)
     subject = Column(String(120), nullable=False, index=True)
     topic = Column(String(120), nullable=False, index=True)
     subtopic = Column(String(120), default="", nullable=False)
@@ -144,6 +147,16 @@ class QuizQuestion(Base):
     quiz = relationship("Quiz", back_populates="question_links")
 
 
+class MaterialChunk(Base):
+    __tablename__ = "material_chunks"
+    id = Column(Integer, primary_key=True)
+    material_id = Column(Integer, ForeignKey("learning_materials.id"), nullable=False, index=True)
+    chunk_index = Column(Integer, nullable=False)
+    source_ref = Column(String(120), default="", nullable=False)
+    content = Column(Text, nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+
 class LearnerQuestionHistory(Base):
     __tablename__ = "learner_question_history"
     id = Column(Integer, primary_key=True)
@@ -161,3 +174,10 @@ Index(
     LearnerQuestionHistory.learner_id,
     LearnerQuestionHistory.fingerprint,
 )
+
+# The application also installs a composite unique index during startup for
+# existing databases. This declaration documents the intended invariant.
+from sqlalchemy import UniqueConstraint
+__table_args__ = (
+    UniqueConstraint("learner_id", "fingerprint", name="uq_question_history_learner_fingerprint"),
+) if False else ()
