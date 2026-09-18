@@ -1,3 +1,7 @@
+import sys
+from pathlib import Path
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
 import asyncio
 from uuid import uuid4
 from sqlalchemy.orm import Session
@@ -36,3 +40,46 @@ def test_material_quiz_uses_gemini_provider(monkeypatch):
         learner=_new_learner(db,"CI-Material"); material=Material(learner_id=learner.id,title="Binary Search Lesson",filename="lesson.txt",mime_type="text/plain",source_type="upload",extracted_text=("Binary search works on sorted data by repeatedly checking the middle element and discarding the impossible half. "*3)); db.add(material); db.commit(); db.refresh(material)
         quiz=asyncio.run(main._generate_material_quiz(material,QuizRequest(learner_id=learner.id,topic="Algorithms",subject="Algorithms",difficulty="easy",count=3),db))
         assert len(quiz["questions"])==3 and all(q["provider"]=="gemini" for q in quiz["questions"])
+
+
+def test_adaptive_quiz_submit_updates_dashboard(monkeypatch):
+    monkeypatch.setattr(main,"get_provider",lambda:FakeProvider())
+    with Session(bind=main.engine) as db:
+        learner=_new_learner(db,"CI-Quiz")
+        req=QuizRequest(learner_id=learner.id,topic="Algorithms",subject="Algorithms",difficulty="easy",count=3)
+        quiz=asyncio.run(main.generate_quiz(req,db))
+        assert len(quiz["questions"])==3
+        assert all(len(q["options"])==4 and q["answer"] in range(4) for q in quiz["questions"])
+        result=main.submit_assessment(__import__("app.schemas",fromlist=["SubmitRequest"]).SubmitRequest(quiz_id=quiz["id"],learner_id=learner.id,answers=[q["answer"] for q in quiz["questions"]]),db)
+        assert result["score"]==100.0 and result["total"]==3
+        data=main.dashboard(learner.id,db)
+        assert data["attempts"]==1 and data["average_score"]==100.0
+        assert data["mastery"]["Algorithms"]==100.0
+
+
+def test_chat_quiz_intent_returns_persisted_quiz(monkeypatch):
+    monkeypatch.setattr(main,"get_provider",lambda:FakeProvider())
+    with Session(bind=main.engine) as db:
+        learner=_new_learner(db,"CI-ChatQuiz")
+        response=asyncio.run(main.chat(ChatRequest(learner_id=learner.id,message="Test me with 3 questions on Python",topic="Python"),db))
+        assert response["quiz"] is not None
+        assert len(response["quiz"]["questions"])==3
+        messages=main.get_conversation_messages(response["conversation_id"],learner.id,db)["messages"]
+        assert messages[-1]["role"]=="assistant"
+
+
+def test_material_upload_and_grounded_chat_context(monkeypatch):
+    captured={}
+    provider=FakeProvider()
+    async def chat(message,context):
+        captured.update(context)
+        return "Grounded response"
+    provider.chat=chat
+    monkeypatch.setattr(main,"get_provider",lambda:provider)
+    with Session(bind=main.engine) as db:
+        learner=_new_learner(db,"CI-Grounded")
+        material=Material(learner_id=learner.id,title="Java Basics",filename="java.txt",mime_type="text/plain",source_type="upload",extracted_text=("Java classes define state and behavior. Objects are created from classes. "*4))
+        db.add(material); db.commit(); db.refresh(material)
+        response=asyncio.run(main.chat(ChatRequest(learner_id=learner.id,message="Explain classes using my material",topic="Java",material_id=material.id),db))
+        assert response["message"]["content"]=="Grounded response"
+        assert "material_context" in captured and "Java classes" in captured["material_context"]
