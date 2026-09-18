@@ -952,88 +952,114 @@ async def _generate_material_quiz(
     difficulty = req.difficulty
     if difficulty == "adaptive":
         difficulty_plan = adaptive_difficulty_plan(score, req.count)
-        generation_difficulty = difficulty_plan[0] if difficulty_plan else "easy"
     else:
         difficulty_plan = [difficulty] * req.count
-        generation_difficulty = difficulty
 
-    previous = _previous_questions(
-        req.learner_id,
-        req.topic or material.title,
-        db,
-    )
-
-    source = retrieve_material_context(
-        material.extracted_text,
-        req.topic or material.title,
-    )
-    if not source:
-        raise HTTPException(400, "The material has no readable content.")
+    previous = _previous_questions(req.learner_id, req.topic or material.title, db)
+    chunks = ensure_material_chunks(material, db)
+    groups = choose_material_coverage_groups(chunks, req.count)
+    if not groups:
+        raise HTTPException(400, "The material has no readable indexed content.")
 
     questions: list[dict] = []
-    for _ in range(4):
+    started = time.perf_counter()
+
+    for group_index, source_group in enumerate(groups):
         if len(questions) >= req.count:
             break
 
         remaining = req.count - len(questions)
-        missing_plan = difficulty_plan[len(questions):]
+        planned_difficulty = (
+            difficulty_plan[min(len(questions), len(difficulty_plan) - 1)]
+            if difficulty_plan
+            else "medium"
+        )
+        candidate_count = min(max(remaining, 2), 6)
         candidates = await provider.generate_material_questions(
-            source,
+            source_group,
             req.subject or req.topic or material.title,
             req.topic or material.title,
-            generation_difficulty,
-            min(max(remaining * 2, 6), 20),
+            planned_difficulty,
+            candidate_count,
             previous + [q["question"] for q in questions],
+            source_reference=f"coverage group {group_index + 1} of {len(groups)}",
         )
 
-        for desired in missing_plan:
-            selected = _unique_candidates(
-                candidates,
-                previous,
-                questions,
-                desired_difficulty=desired,
-            )
-            if selected:
-                question = selected[0]
-                question["id"] = f"gemini-{uuid.uuid4().hex[:16]}"
-                question["provider"] = "gemini"
-                questions.append(shuffle_question_options(question))
-                if len(questions) == req.count:
-                    break
+        selected = _unique_candidates(
+            candidates,
+            previous,
+            questions,
+            desired_difficulty=planned_difficulty if difficulty != "adaptive" else None,
+        )
+        for question in selected:
+            if len(questions) >= req.count:
+                break
+            question["id"] = f"gemini-{uuid.uuid4().hex[:16]}"
+            question["provider"] = "gemini"
+            questions.append(shuffle_question_options(question))
 
-        if len(questions) < req.count:
-            extras = _unique_candidates(
-                candidates,
-                previous,
-                questions,
-                desired_difficulty=None if req.difficulty == "adaptive" else generation_difficulty,
-            )
-            for question in extras:
-                question["id"] = f"gemini-{uuid.uuid4().hex[:16]}"
-                question["provider"] = "gemini"
-                questions.append(shuffle_question_options(question))
-                if len(questions) == req.count:
-                    break
+    # A final gap-fill pass can use any remaining document chunks. This is still
+    # source-grounded and globally deduplicated, and avoids returning fewer
+    # questions simply because one coverage group produced unusable candidates.
+    if len(questions) < req.count:
+        remaining_text = "\n\n--- DOCUMENT COVERAGE CHUNK ---\n\n".join(
+            item.content
+            for item in chunks
+            if item.chunk_index % max(1, len(chunks) // max(1, req.count)) == 0
+        )
+        candidates = await provider.generate_material_questions(
+            remaining_text[:180000],
+            req.subject or req.topic or material.title,
+            req.topic or material.title,
+            difficulty_plan[len(questions)] if len(questions) < len(difficulty_plan) else "medium",
+            min(max((req.count - len(questions)) * 2, 4), 10),
+            previous + [q["question"] for q in questions],
+            source_reference="document-wide gap fill",
+        )
+        selected = _unique_candidates(
+            candidates,
+            previous,
+            questions,
+            desired_difficulty=None if difficulty == "adaptive" else difficulty,
+        )
+        for question in selected:
+            if len(questions) >= req.count:
+                break
+            question["id"] = f"gemini-{uuid.uuid4().hex[:16]}"
+            question["provider"] = "gemini"
+            questions.append(shuffle_question_options(question))
+
+    duration_ms = round((time.perf_counter() - started) * 1000)
+    logger.info(
+        "material_quiz material=%s learner=%s chunks=%s requested=%s accepted=%s duration_ms=%s",
+        material.id,
+        req.learner_id,
+        len(chunks),
+        req.count,
+        len(questions),
+        duration_ms,
+    )
 
     if len(questions) < req.count:
         raise safe_gemini_failure(
             provider,
-            "Gemini could not produce enough new material-grounded questions. "
-            "Try a shorter or clearer source document.",
+            f"Gemini produced {len(questions)} validated new material questions instead of {req.count}.",
         )
 
+    final_questions = questions[: req.count]
     quiz = store_questions(
         db,
         req.learner_id,
-        questions,
+        final_questions,
         req.topic or material.title,
-        "adaptive" if req.difficulty == "adaptive" else generation_difficulty,
+        "adaptive" if req.difficulty == "adaptive" else difficulty,
+        material_id=material.id,
     )
     return {
         "id": quiz.id,
         "topic": req.topic or material.title,
-        "difficulty": "adaptive" if req.difficulty == "adaptive" else generation_difficulty,
-        "questions": questions,
+        "difficulty": "adaptive" if req.difficulty == "adaptive" else difficulty,
+        "questions": final_questions,
     }
 
 
