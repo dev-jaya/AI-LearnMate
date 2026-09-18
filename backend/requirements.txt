@@ -7,3 +7,4 @@ python-multipart>=0.0.9,<1
 pypdf>=5,<7
 google-genai>=2.24,<3
 pytest>=8,<9
+psycopg[binary]>=3.2,<4
