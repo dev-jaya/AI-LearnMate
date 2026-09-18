@@ -380,6 +380,7 @@ MCQ_SCHEMA = {
 
 class SdkGeminiProvider(AIProvider):
     """Gemini provider using the official google-genai SDK."""
+    name = "gemini"
 
     def __init__(self):
         self.api_key = settings.gemini_api_key
