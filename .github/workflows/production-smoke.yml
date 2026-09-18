@@ -1,7 +1,5 @@
 name: AI LearnMate Production Smoke
 
-name: AI LearnMate Production Smoke
-
 on:
   workflow_run:
     workflows: ["AI LearnMate CI"]
