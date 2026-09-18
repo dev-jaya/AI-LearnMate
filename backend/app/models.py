@@ -156,6 +156,15 @@ class MaterialChunk(Base):
     content = Column(Text, nullable=False)
     created_at = Column(DateTime, default=datetime.utcnow)
 
+    __table_args__ = (
+        Index(
+            "uq_material_chunk_material_index",
+            "material_id",
+            "chunk_index",
+            unique=True,
+        ),
+    )
+
 
 class LearnerQuestionHistory(Base):
     __tablename__ = "learner_question_history"
