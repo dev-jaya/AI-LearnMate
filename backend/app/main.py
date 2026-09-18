@@ -3,6 +3,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session
 from sqlalchemy import inspect, text
 import json
+import logging
 import math
 import re
 import uuid
@@ -35,6 +36,8 @@ from .materials import (
 )
 from .schemas import *
 from .ai_providers import SUBJECTS, get_provider, question_similarity
+
+logger = logging.getLogger(__name__)
 
 Base.metadata.create_all(bind=engine)
 app = FastAPI(title="AI LearnMate API", version="1.4.0")
