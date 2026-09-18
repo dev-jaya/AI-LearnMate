@@ -41,7 +41,7 @@ from .ai_providers import SUBJECTS, get_provider, question_similarity
 logger = logging.getLogger(__name__)
 
 Base.metadata.create_all(bind=engine)
-app = FastAPI(title="AI LearnMate API", version="1.4.0")
+app = FastAPI(title="AI LearnMate API", version="1.5.0")
 
 
 def configured_cors_origins() -> list[str]:
@@ -141,7 +141,7 @@ seed_subject_catalog()
 
 @app.get("/")
 def root():
-    return {"name": "AI LearnMate", "status": "running", "version": "1.4.0"}
+    return {"name": "AI LearnMate", "status": "running", "version": "1.5.0"}
 
 
 @app.get("/health")
@@ -1307,6 +1307,7 @@ async def chat(req: ChatRequest, db: Session = Depends(get_db)):
         {"role": message.role, "content": message.content}
         for message in reversed(history)
     ]
+    context["gemini_interaction_id"] = conversation.gemini_interaction_id or None
 
     lower = req.message.lower()
     quiz_intent = any(
@@ -1365,6 +1366,8 @@ async def chat(req: ChatRequest, db: Session = Depends(get_db)):
                 provider,
                 "Gemini did not return a usable assistant response.",
             )
+        if getattr(provider, "last_interaction_id", None):
+            conversation.gemini_interaction_id = provider.last_interaction_id
     assistant = Message(
         conversation_id=conversation.id,
         role="assistant",
