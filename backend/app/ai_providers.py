@@ -853,47 +853,46 @@ class SdkGeminiProvider(GeminiProvider):
         json_mode=False,
         store=False,
     ):
+        original_model = self.model
         candidates = []
-        for model in (self.model, *GEMINI_MODEL_FALLBACKS):
+        for model in (original_model, *GEMINI_MODEL_FALLBACKS):
             model = str(model).strip().removeprefix("models/")
             if model and model not in candidates:
                 candidates.append(model)
 
-        for index, model in enumerate(candidates):
-            result = await self._sdk_create(
-                model=model,
-                input_data=input_data,
-                system=system,
-                response_schema=response_schema,
-                previous_interaction_id=previous_interaction_id if index == 0 else None,
-                json_mode=json_mode,
-                store=store,
-            )
-            if result is not None:
-                return result
-            if index == 0 and self.last_error_category in {"quota", "model_not_found"}:
-                logger.warning(
-                    "Gemini fallback model=%s after category=%s",
-                    model,
-                    self.last_error_category,
+        try:
+            for index, model in enumerate(candidates):
+                self.model = model
+                result = await self._sdk_create(
+                    model=model,
+                    input_data=input_data,
+                    system=system,
+                    response_schema=response_schema,
+                    previous_interaction_id=previous_interaction_id if index == 0 else None,
+                    json_mode=json_mode,
+                    store=store,
                 )
-                continue
+                if result is not None:
+                    return result
+
+                if index == 0 and self.last_error_category in {"quota", "model_not_found"}:
+                    logger.warning(
+                        "Gemini fallback model=%s after category=%s",
+                        model,
+                        self.last_error_category,
+                    )
+                    continue
+
+                return None
             return None
-        return None
+        finally:
+            self.model = original_model
 
     async def chat(self, message, context):
         history = []
         for item in context.get("conversation", [])[-12:]:
             content = str(item.get("content", "")).strip()
             if not content:
-                continue
-            # The current user message is already persisted by the API layer.
-            # Do not send it twice to Gemini.
-            if (
-                item.get("role") == "user"
-                and content == message
-                and not history
-            ):
                 continue
             history.append(
                 {
@@ -902,7 +901,15 @@ class SdkGeminiProvider(GeminiProvider):
                 }
             )
 
-        if not history or history[-1].get("type") != "user_input" or history[-1]["content"][0]["text"] != message:
+        # The API persists the current user message before calling the provider.
+        # Treat that last persisted message as the current turn and do not append
+        # a second copy of it.
+        if history and (
+            history[-1].get("type") == "user_input"
+            and history[-1].get("content", [{}])[0].get("text") == message
+        ):
+            pass
+        else:
             history.append(
                 {
                     "type": "user_input",
