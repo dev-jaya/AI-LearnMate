@@ -150,7 +150,29 @@ def ai_health():
         "model": provider.model,
         "configured": configured,
         "status": "configured" if configured else "missing-key",
-        "note": "This endpoint checks configuration only; it does not consume Gemini quota.",
+        "note": "Configuration only; no Gemini request is made.",
+    }
+
+
+@app.get("/health/ai/probe")
+async def ai_probe():
+    provider = get_provider()
+    if not provider.api_key:
+        raise HTTPException(503, "Gemini is not configured on the server.")
+    started = time.perf_counter()
+    reply = await provider.chat(
+        "Reply with exactly OK.",
+        {"learner_name": "health probe", "conversation": []},
+    )
+    duration_ms = round((time.perf_counter() - started) * 1000)
+    if not reply:
+        raise safe_gemini_failure(provider, "Gemini health probe failed.")
+    return {
+        "status": "ok",
+        "provider": provider.name,
+        "model": provider.model,
+        "response": reply,
+        "duration_ms": duration_ms,
     }
 
 
