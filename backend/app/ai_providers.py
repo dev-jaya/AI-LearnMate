@@ -118,6 +118,18 @@ def validate_question(
         if not explanation:
             return None
 
+        source_evidence = str(raw.get("source_evidence", "")).strip()
+        if require_source_evidence:
+            if not source_text or not source_evidence:
+                return None
+            source_tokens = set(re.findall(r"[a-zA-Z0-9]{3,}", source_text.lower()))
+            evidence_tokens = set(re.findall(r"[a-zA-Z0-9]{3,}", source_evidence.lower()))
+            if not evidence_tokens:
+                return None
+            coverage = len(source_tokens & evidence_tokens) / len(evidence_tokens)
+            if coverage < 0.55:
+                return None
+
         qtype = str(raw.get("question_type", "conceptual")).strip().lower()
         if qtype not in QUESTION_TYPES:
             qtype = "conceptual"
@@ -142,6 +154,8 @@ def validate_question(
             "question_type": qtype,
             "provider": "gemini",
         }
+        if source_evidence:
+            result["source_evidence"] = source_evidence
     except (TypeError, ValueError):
         return None
 
@@ -182,6 +196,7 @@ MCQ_SCHEMA = {
                     "subject": {"type": "string"},
                     "topic": {"type": "string"},
                     "subtopic": {"type": "string"},
+                    "source_evidence": {"type": "string"},
                 },
                 "required": [
                     "question",
@@ -585,7 +600,15 @@ Application-provided learner context (use only when relevant):
         )
 
     async def _questions_from_prompt(
-        self, prompt: str, subject: str, topic: str, subtopic: str, difficulty: str
+        self,
+        prompt: str,
+        subject: str,
+        topic: str,
+        subtopic: str,
+        difficulty: str,
+        *,
+        source_text: str | None = None,
+        require_source_evidence: bool = False,
     ):
         content = await self._generate(
             prompt,
@@ -609,7 +632,13 @@ Application-provided learner context (use only when relevant):
                 if not isinstance(raw, dict):
                     continue
                 question = validate_question(
-                    raw, subject, topic, subtopic, difficulty
+                    raw,
+                    subject,
+                    topic,
+                    subtopic,
+                    difficulty,
+                    source_text=source_text,
+                    require_source_evidence=require_source_evidence,
                 )
                 if question:
                     validated.append(question)
@@ -642,9 +671,9 @@ Each question must have exactly four distinct options. correct_answer must exact
     async def generate_material_questions(
         self, material_text, subject, topic, difficulty, count, excluded_questions
     ):
-        source = material_text[:50000]
+        source = material_text[:180000]
         excluded = "\n".join(
-            f"- {item}" for item in excluded_questions[-30:]
+            f"- {item}" for item in excluded_questions[-100:]
         ) or "- none"
         variation = uuid.uuid4().hex[:8]
         prompt = f"""Create exactly {count} new multiple-choice questions using ONLY the supplied source material.
@@ -652,14 +681,20 @@ Subject: {subject}
 Topic: {topic}
 Difficulty: {difficulty}
 Variation token: {variation}
-Every question and correct answer must be directly supported by the source. Do not introduce outside facts. Use exactly four distinct options; correct_answer must exactly equal one option. Make distractors plausible but clearly wrong according to the source. Explanations must connect the answer to the source.
+Every question and correct answer must be directly supported by the source. Do not introduce outside facts. Use exactly four distinct options; correct_answer must exactly equal one option. Make distractors plausible but clearly wrong according to the source. Explanations must connect the answer to the source. Also include source_evidence: a short phrase copied from the source that supports the correct answer.
 Previously used questions to avoid:
 {excluded}
 
 SOURCE MATERIAL:
 {source}"""
         return await self._questions_from_prompt(
-            prompt, subject, topic, "Material-based", difficulty
+            prompt,
+            subject,
+            topic,
+            "Material-based",
+            difficulty,
+            source_text=source,
+            require_source_evidence=True,
         )
 
 
