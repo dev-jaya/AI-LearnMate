@@ -1,6 +1,8 @@
 name: AI LearnMate Production Smoke
 
 on:
+  push:
+    branches: [verification/production-e2e]
   workflow_run:
     workflows: ["AI LearnMate CI"]
     types: [completed]
@@ -10,7 +12,8 @@ on:
 jobs:
   production-api:
     if: >-
-      ${{ (github.event_name == 'workflow_run' &&
+      ${{ (github.event_name == 'push') ||
+          (github.event_name == 'workflow_run' &&
             github.event.workflow_run.conclusion == 'success' &&
             (github.event.workflow_run.head_branch == 'main' ||
              github.event.workflow_run.head_branch == 'verification/production-e2e')) ||
