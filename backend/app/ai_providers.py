@@ -1,5 +1,6 @@
 """Gemini provider and deterministic validation helpers for AI LearnMate."""
 import asyncio
+import difflib
 import hashlib
 import json
 import logging
@@ -9,6 +10,7 @@ from abc import ABC, abstractmethod
 from typing import Any
 
 import httpx
+from google import genai
 
 from .config import settings
 
@@ -52,19 +54,9 @@ QUESTION_TYPES = {
 
 DIFFICULTIES = {"easy", "medium", "hard"}
 
-# Keep compatibility with stale deployments while using current Gemini models.
-MODEL_ALIASES = {
-    "gemini-2.5-flash": "gemini-3.6-flash",
-    "models/gemini-2.5-flash": "gemini-3.6-flash",
-}
-
-# Gemini-only failover order. A 429 on one model should not cause repeated
-# requests to the same exhausted model; another Gemini model can be tried once.
 GEMINI_MODEL_FALLBACKS = (
-    "gemini-3.8-flash",
     "gemini-3.7-flash",
-    "gemini-3.5-flash",
-    "gemini-3.5-flash-lite",
+    "gemini-3.6-flash",
 )
 
 
@@ -73,10 +65,14 @@ def _normalize(text: str) -> str:
 
 
 def question_similarity(a: str, b: str) -> float:
-    left, right = set(_normalize(a).split()), set(_normalize(b).split())
+    left = _normalize(a)
+    right = _normalize(b)
     if not left or not right:
         return 0.0
-    return len(left & right) / len(left | right)
+    lt, rt = set(left.split()), set(right.split())
+    jaccard = len(lt & rt) / max(1, len(lt | rt))
+    sequence = difflib.SequenceMatcher(None, left, right).ratio()
+    return max(jaccard, sequence * 0.92)
 
 
 def validate_question(
@@ -668,6 +664,214 @@ SOURCE MATERIAL:
         )
 
 
+class SdkGeminiProvider(GeminiProvider):
+    """Gemini provider using the official google-genai SDK."""
+
+    def __init__(self):
+        self.api_key = settings.gemini_api_key
+        self.model = settings.gemini_model.strip().removeprefix("models/")
+        self.base_url = settings.gemini_base_url.rstrip("/")
+        self.last_error = ""
+        self.last_status_code = None
+        self.last_error_category = ""
+        self.last_interaction_id = None
+
+    def _client(self):
+        return genai.Client(
+            api_key=self.api_key,
+            http_options={"api_version": "v1beta"},
+        )
+
+    @staticmethod
+    def _status(exc):
+        for attr in ("status_code", "code"):
+            value = getattr(exc, attr, None)
+            if isinstance(value, int):
+                return value
+        response = getattr(exc, "response", None)
+        value = getattr(response, "status_code", None)
+        return value if isinstance(value, int) else None
+
+    @staticmethod
+    def _category(status, detail):
+        lower = detail.lower()
+        if status in (401, 403) or "api key" in lower or "authentication" in lower:
+            return "authentication"
+        if status == 404 or "not found" in lower:
+            return "model_not_found"
+        if status == 429 or "quota" in lower or "rate limit" in lower or "resource_exhausted" in lower:
+            return "quota"
+        if status in (400, 422):
+            if "safety" in lower or "blocked" in lower:
+                return "blocked_response"
+            return "bad_request"
+        if "timeout" in lower or "deadline" in lower:
+            return "timeout"
+        if "network" in lower or "connection" in lower:
+            return "network"
+        if status in (500, 502, 503, 504):
+            return "service_unavailable"
+        return "unknown"
+
+    def _remember_error(self, exc, model):
+        status = self._status(exc)
+        detail = str(exc).replace(self.api_key or "", "[REDACTED]")[:600]
+        self.last_status_code = status
+        self.last_error = detail
+        self.last_error_category = self._category(status, detail)
+        logger.warning(
+            "Gemini failure model=%s category=%s status=%s error=%s",
+            model,
+            self.last_error_category,
+            status,
+            detail,
+        )
+
+    @staticmethod
+    def _output_text(interaction):
+        value = getattr(interaction, "output_text", None)
+        if value:
+            return str(value).strip()
+        outputs = getattr(interaction, "outputs", None) or []
+        return "".join(
+            str(getattr(item, "text", ""))
+            for item in outputs
+            if getattr(item, "type", "") == "text" and getattr(item, "text", "")
+        ).strip()
+
+    async def _sdk_create(
+        self,
+        model,
+        input_data,
+        system,
+        response_schema=None,
+        previous_interaction_id=None,
+        json_mode=False,
+        store=False,
+    ):
+        if not self.api_key:
+            self.last_error = "GEMINI_API_KEY is not configured"
+            self.last_error_category = "configuration"
+            self.last_status_code = None
+            return None
+
+        kwargs = {
+            "input": input_data,
+            "system_instruction": system,
+            "store": store,
+            "generation_config": {
+                "max_output_tokens": 8192 if json_mode else 2048,
+            },
+        }
+        if previous_interaction_id:
+            kwargs["previous_interaction_id"] = previous_interaction_id
+        if json_mode and response_schema:
+            kwargs["response_format"] = {
+                "type": "text",
+                "mime_type": "application/json",
+                "schema": response_schema,
+            }
+
+        def run():
+            client = self._client()
+            try:
+                return client.interactions.create(model=model, **kwargs)
+            finally:
+                try:
+                    client.close()
+                except Exception:
+                    pass
+
+        try:
+            interaction = await asyncio.to_thread(run)
+            output = self._output_text(interaction)
+            if not output:
+                self.last_status_code = 502
+                self.last_error = "Gemini returned no text output."
+                self.last_error_category = "invalid_response"
+                return None
+            self.last_status_code = 200
+            self.last_error = ""
+            self.last_error_category = ""
+            self.last_interaction_id = getattr(interaction, "id", None)
+            return output
+        except Exception as exc:
+            self._remember_error(exc, model)
+            return None
+
+    async def _generate(
+        self,
+        input_data,
+        system,
+        response_schema=None,
+        *,
+        previous_interaction_id=None,
+        json_mode=False,
+        store=False,
+    ):
+        candidates = []
+        for model in (self.model, *GEMINI_MODEL_FALLBACKS):
+            model = str(model).strip().removeprefix("models/")
+            if model and model not in candidates:
+                candidates.append(model)
+
+        for index, model in enumerate(candidates):
+            result = await self._sdk_create(
+                model=model,
+                input_data=input_data,
+                system=system,
+                response_schema=response_schema,
+                previous_interaction_id=previous_interaction_id if index == 0 else None,
+                json_mode=json_mode,
+                store=store,
+            )
+            if result is not None:
+                return result
+            if index == 0 and self.last_error_category in {"quota", "model_not_found"}:
+                logger.warning(
+                    "Gemini fallback model=%s after category=%s",
+                    model,
+                    self.last_error_category,
+                )
+                continue
+            return None
+        return None
+
+    async def chat(self, message, context):
+        previous_id = context.get("gemini_interaction_id")
+        result = await self._generate(
+            message,
+            self._chat_system(context),
+            previous_interaction_id=previous_id,
+            store=True,
+        )
+        if result is not None:
+            return result
+
+        history = context.get("conversation", [])[-12:]
+        stateless = [
+            {
+                "type": "user_input" if item.get("role") == "user" else "model_output",
+                "content": [{"type": "text", "text": str(item.get("content", ""))}],
+            }
+            for item in history
+            if str(item.get("content", "")).strip()
+        ]
+        if stateless and self.last_error_category in {
+            "bad_request",
+            "model_not_found",
+            "quota",
+        }:
+            return await self._generate(
+                stateless,
+                self._chat_system(context),
+                previous_interaction_id=None,
+                store=False,
+            )
+        return None
+
+
+
 def get_provider() -> AIProvider:
     """Gemini is the application's only configured AI provider."""
-    return GeminiProvider()
+    return SdkGeminiProvider()
