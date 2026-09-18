@@ -71,7 +71,7 @@ def main():
     print("2/13 checking AI configuration...")
     ai = json_request("GET", "/health/ai")
     assert ai.get("configured") is True, ai
-    assert ai.get("model") == "gemini-3.6-flash", ai
+    assert ai.get("model") == "gemini-2.5-flash", ai
     print("PASS", {"configured": ai["configured"], "model": ai["model"]})
 
     print("3/13 checking frontend...")
