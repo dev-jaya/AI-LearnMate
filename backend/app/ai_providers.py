@@ -125,12 +125,9 @@ def validate_question(
         if require_source_evidence:
             if not source_text or not source_evidence:
                 return None
-            source_tokens = set(re.findall(r"[a-zA-Z0-9]{3,}", source_text.lower()))
-            evidence_tokens = set(re.findall(r"[a-zA-Z0-9]{3,}", source_evidence.lower()))
-            if not evidence_tokens:
-                return None
-            coverage = len(source_tokens & evidence_tokens) / len(evidence_tokens)
-            if coverage < 0.55:
+            normalized_source = _normalize(source_text)
+            normalized_evidence = _normalize(source_evidence)
+            if not normalized_evidence or normalized_evidence not in normalized_source:
                 return None
 
         qtype = str(raw.get("question_type", "conceptual")).strip().lower()
@@ -674,7 +671,14 @@ Each question must have exactly four distinct options. correct_answer must exact
         )
 
     async def generate_material_questions(
-        self, material_text, subject, topic, difficulty, count, excluded_questions
+        self,
+        material_text,
+        subject,
+        topic,
+        difficulty,
+        count,
+        excluded_questions,
+        source_reference=None,
     ):
         source = material_text[:180000]
         excluded = "\n".join(
@@ -685,6 +689,7 @@ Each question must have exactly four distinct options. correct_answer must exact
 Subject: {subject}
 Topic: {topic}
 Difficulty: {difficulty}
+Source reference: {source_reference or 'document coverage'}
 Variation token: {variation}
 Every question and correct answer must be directly supported by the source. Do not introduce outside facts. Use exactly four distinct options; correct_answer must exactly equal one option. Make distractors plausible but clearly wrong according to the source. Explanations must connect the answer to the source. Also include source_evidence: a short phrase copied from the source that supports the correct answer.
 Previously used questions to avoid:
@@ -877,37 +882,40 @@ class SdkGeminiProvider(GeminiProvider):
         return None
 
     async def chat(self, message, context):
-        previous_id = context.get("gemini_interaction_id")
-        result = await self._generate(
-            message,
-            self._chat_system(context),
-            previous_interaction_id=previous_id,
-            store=True,
-        )
-        if result is not None:
-            return result
-
-        history = context.get("conversation", [])[-12:]
-        stateless = [
-            {
-                "type": "user_input" if item.get("role") == "user" else "model_output",
-                "content": [{"type": "text", "text": str(item.get("content", ""))}],
-            }
-            for item in history
-            if str(item.get("content", "")).strip()
-        ]
-        if stateless and self.last_error_category in {
-            "bad_request",
-            "model_not_found",
-            "quota",
-        }:
-            return await self._generate(
-                stateless,
-                self._chat_system(context),
-                previous_interaction_id=None,
-                store=False,
+        history = []
+        for item in context.get("conversation", [])[-12:]:
+            content = str(item.get("content", "")).strip()
+            if not content:
+                continue
+            # The current user message is already persisted by the API layer.
+            # Do not send it twice to Gemini.
+            if (
+                item.get("role") == "user"
+                and content == message
+                and not history
+            ):
+                continue
+            history.append(
+                {
+                    "type": "user_input" if item.get("role") == "user" else "model_output",
+                    "content": [{"type": "text", "text": content}],
+                }
             )
-        return None
+
+        if not history or history[-1].get("type") != "user_input" or history[-1]["content"][0]["text"] != message:
+            history.append(
+                {
+                    "type": "user_input",
+                    "content": [{"type": "text", "text": message}],
+                }
+            )
+
+        return await self._generate(
+            history,
+            self._chat_system(context),
+            previous_interaction_id=None,
+            store=False,
+        )
 
 
 
