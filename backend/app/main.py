@@ -859,6 +859,57 @@ def list_materials(learner_id: int, db: Session = Depends(get_db)):
     }
 
 
+
+def ensure_material_chunks(material: Material, db: Session) -> list[MaterialChunk]:
+    chunks = (
+        db.query(MaterialChunk)
+        .filter(MaterialChunk.material_id == material.id)
+        .order_by(MaterialChunk.chunk_index.asc())
+        .all()
+    )
+    if chunks:
+        return chunks
+
+    records = material_chunk_records([("document", material.extracted_text)])
+    chunks = [
+        MaterialChunk(
+            material_id=material.id,
+            chunk_index=item["chunk_index"],
+            source_ref=item["source_ref"],
+            content=item["content"],
+        )
+        for item in records
+    ]
+    db.add_all(chunks)
+    db.commit()
+    for chunk in chunks:
+        db.refresh(chunk)
+    return chunks
+
+
+def choose_material_coverage_groups(
+    chunks: list[MaterialChunk],
+    requested_count: int,
+) -> list[str]:
+    if not chunks:
+        return []
+    target_groups = min(max(requested_count, 4), 8)
+    positions = []
+    for group_index in range(target_groups):
+        position = round(
+            group_index * (len(chunks) - 1) / max(1, target_groups - 1)
+        )
+        positions.append(position)
+
+    groups = []
+    for position in positions:
+        selected = chunks[position]
+        groups.append(
+            f"{selected.source_ref} | chunk {selected.chunk_index + 1}\\n{selected.content}"
+        )
+    return groups
+
+
 async def _generate_material_quiz(
     material: Material,
     req: QuizRequest,
