@@ -1,0 +1,38 @@
+name: AI LearnMate Production Smoke
+
+on:
+  workflow_run:
+    workflows: ["AI LearnMate CI"]
+    types: [completed]
+
+jobs:
+  production-api:
+    if: ${{ github.event.workflow_run.conclusion == 'success' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run production HTTP smoke
+        env:
+          BACKEND_URL: https://ai-learnmate-backend.onrender.com
+          FRONTEND_URL: https://ai-learnmate-frontend.onrender.com
+          EXPECTED_VERSION: "1.5.0"
+        run: python .github/scripts/production_smoke.py
+
+  production-browser:
+    needs: production-api
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+      - name: Install browser test dependency
+        run: npm install --no-save playwright@latest
+      - name: Install Chromium
+        run: npx playwright install --with-deps chromium
+      - name: Run browser smoke
+        env:
+          FRONTEND_URL: https://ai-learnmate-frontend.onrender.com
+        run: node .github/scripts/browser_smoke.mjs
