@@ -144,6 +144,14 @@ def run():
     provider = SdkGeminiProvider()
     assert provider.name == "gemini"
     assert provider.model == "gemini-3.8-flash"
+
+    from sqlalchemy import create_engine
+    postgres_engine = create_engine(
+        "postgresql+psycopg://test:test@localhost/test",
+        pool_pre_ping=True,
+    )
+    assert postgres_engine.dialect.name == "postgresql"
+    postgres_engine.dispose()
     assert provider._category(429, "RESOURCE_EXHAUSTED quota") == "quota"
     assert provider._category(401, "API key rejected") == "authentication"
     assert provider._category(404, "model not found") == "model_not_found"
