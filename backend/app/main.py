@@ -919,23 +919,27 @@ def choose_material_coverage_groups(
     chunks: list[MaterialChunk],
     requested_count: int,
 ) -> list[str]:
+    """Partition the complete indexed document into coverage bands."""
     if not chunks:
         return []
-    target_groups = min(max(requested_count, 4), 8)
-    positions = []
-    for group_index in range(target_groups):
-        position = round(
-            group_index * (len(chunks) - 1) / max(1, target_groups - 1)
-        )
-        positions.append(position)
 
+    target_groups = min(max(requested_count, 4), 8, len(chunks))
     groups = []
-    for position in positions:
-        selected = chunks[position]
-        groups.append(
-            f"{selected.source_ref} | chunk {selected.chunk_index + 1}\\n{selected.content}"
+    band_size = max(1, math.ceil(len(chunks) / target_groups))
+
+    for band_start in range(0, len(chunks), band_size):
+        band = chunks[band_start:band_start + band_size]
+        if not band:
+            continue
+        source = "\n\n".join(
+            f"[{item.source_ref} | chunk {item.chunk_index + 1}]\n{item.content}"
+            for item in band
         )
-    return groups
+        # Keep each coverage request comfortably below the per-call material
+        # context budget while still representing every chunk in the band.
+        groups.append(source[:30000])
+
+    return groups[:target_groups]
 
 
 async def _generate_material_quiz(
