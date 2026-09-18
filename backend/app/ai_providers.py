@@ -557,11 +557,11 @@ class SdkGeminiProvider(AIProvider):
         if previous_interaction_id:
             kwargs["previous_interaction_id"] = previous_interaction_id
         if json_mode and response_schema:
-            kwargs["response_format"] = {
+            kwargs["response_format"] = [{
                 "type": "text",
                 "mime_type": "application/json",
                 "schema": response_schema,
-            }
+            }]
             kwargs["generation_config"] = {"max_output_tokens": 8192}
         else:
             kwargs["generation_config"] = {"max_output_tokens": 4096}
