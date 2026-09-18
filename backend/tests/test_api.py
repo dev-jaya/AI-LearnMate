@@ -103,23 +103,28 @@ def test_no_repeat_uses_learner_history(monkeypatch):
         assert first_questions.isdisjoint(second_questions)
 
 
-def test_chat_uses_persistent_gemini_interaction_id(monkeypatch):
+def test_chat_does_not_require_external_gemini_session_state(monkeypatch):
     provider = FakeProvider()
-    seen = {}
+    captured = {}
     async def chat(message, context):
-        seen["interaction_id"] = context.get("gemini_interaction_id")
-        provider.last_interaction_id = "interaction-test-123"
+        captured["conversation"] = list(context.get("conversation", []))
         return "ok"
     provider.chat = chat
     monkeypatch.setattr(main, "get_provider", lambda: provider)
     with Session(bind=main.engine) as db:
         learner = _new_learner(db, "CI-State")
-        response = asyncio.run(main.chat(ChatRequest(
-            learner_id=learner.id, message="hi", topic="Java"
+        first = asyncio.run(main.chat(ChatRequest(
+            learner_id=learner.id, message="My name is Kumar", topic="Java"
         ), db))
-        conversation = db.get(main.Conversation, response["conversation_id"])
-        assert seen["interaction_id"] is None
-        assert conversation.gemini_interaction_id == "interaction-test-123"
+        asyncio.run(main.chat(ChatRequest(
+            learner_id=learner.id,
+            message="What is my name?",
+            topic="Java",
+            conversation_id=first["conversation_id"],
+        ), db))
+        texts = [item["content"] for item in captured["conversation"]]
+        assert texts.count("What is my name?") == 1
+        assert "My name is Kumar" in texts
 
 
 
@@ -138,3 +143,37 @@ def test_gemini_error_categories_are_safe(monkeypatch):
         exc = safe_gemini_failure(provider, "default")
         assert exc.status_code == expected_status
         assert "test-key" not in str(exc.detail)
+
+
+def test_material_context_uses_user_question(monkeypatch):
+    captured = {}
+    provider = FakeProvider()
+    async def chat(message, context):
+        captured["material_context"] = context.get("material_context", "")
+        return "grounded"
+    provider.chat = chat
+    monkeypatch.setattr(main, "get_provider", lambda: provider)
+    with Session(bind=main.engine) as db:
+        learner = _new_learner(db, "CI-MaterialQuery")
+        material = Material(
+            learner_id=learner.id,
+            title="Topic Map",
+            filename="topic.txt",
+            mime_type="text/plain",
+            source_type="upload",
+            extracted_text=(
+                "ALPHA fact about arrays. "
+                "BETA fact about recursion. "
+                "GAMMA fact about JVM internals. "
+            ) * 8,
+        )
+        db.add(material)
+        db.commit()
+        db.refresh(material)
+        asyncio.run(main.chat(ChatRequest(
+            learner_id=learner.id,
+            message="What does the material say about recursion?",
+            topic="Java",
+            material_id=material.id,
+        ), db))
+        assert "recursion" in captured["material_context"].lower()
