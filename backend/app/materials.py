@@ -252,4 +252,4 @@ async def import_igot_resource(url: str) -> tuple[str, str, str]:
     title_match = re.search(r"(?is)<title[^>]*>(.*?)</title>", raw_text)
     title = _clean_html(title_match.group(1)) if title_match else filename
     title = (title or filename or "iGOT learning resource")[:200]
-    return title, text[:1_500_000], content_type or "text/plain"
+    return title, text, content_type or "text/plain"
