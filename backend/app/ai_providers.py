@@ -64,7 +64,7 @@ GEMINI_MODEL_FALLBACKS = (
     "gemini-3.8-flash",
     "gemini-3.7-flash",
     "gemini-3.5-flash",
-    "gemini-flash-lite-latest",
+    "gemini-3.5-flash-lite",
 )
 
 
@@ -327,7 +327,7 @@ class GeminiProvider(AIProvider):
         self.last_status_code = None
         try:
             async with httpx.AsyncClient(
-                timeout=httpx.Timeout(60.0, connect=15.0)
+                timeout=httpx.Timeout(90.0, connect=15.0)
             ) as client:
                 response = await client.post(
                     url, headers=self._headers(), json=payload
@@ -472,6 +472,7 @@ class GeminiProvider(AIProvider):
                 input_data, system, response_schema, json_mode
             )
             if result is not None:
+                self.model = original_model
                 return result
 
             status = self.last_status_code
@@ -484,6 +485,7 @@ class GeminiProvider(AIProvider):
                     json_mode,
                 )
                 if legacy_result is not None:
+                    self.model = original_model
                     return legacy_result
                 status = self.last_status_code
 
@@ -498,6 +500,7 @@ class GeminiProvider(AIProvider):
 
             # Non-quota failures are not made worse by trying unrelated models.
             if status not in {404, 405}:
+                self.model = original_model
                 return None
 
         self.model = original_model
