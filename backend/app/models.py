@@ -175,9 +175,3 @@ Index(
     LearnerQuestionHistory.fingerprint,
 )
 
-# The application also installs a composite unique index during startup for
-# existing databases. This declaration documents the intended invariant.
-from sqlalchemy import UniqueConstraint
-__table_args__ = (
-    UniqueConstraint("learner_id", "fingerprint", name="uq_question_history_learner_fingerprint"),
-) if False else ()
