@@ -76,7 +76,8 @@ def _xml_text(raw: bytes, tags: tuple[str, ...]) -> str:
         return ""
 
 
-def extract_text(filename: str, raw: bytes, mime_type: str = "") -> str:
+def extract_segments(filename: str, raw: bytes, mime_type: str = "") -> list[tuple[str, str]]:
+    """Extract the complete document while retaining a useful source locator."""
     if len(raw) > MAX_MATERIAL_BYTES:
         raise ValueError("Material is too large. Maximum supported size is 12 MB.")
 
@@ -88,35 +89,56 @@ def extract_text(filename: str, raw: bytes, mime_type: str = "") -> str:
         if suffix == ".pdf":
             if not raw.startswith(b"%PDF-"):
                 raise ValueError("The uploaded PDF file is invalid or unreadable.")
-            try:
-                from pypdf import PdfReader
-            except ImportError as exc:
-                raise ValueError("PDF support is not installed on the server.") from exc
+            from pypdf import PdfReader
             reader = PdfReader(BytesIO(raw))
-            parts = [(page.extract_text() or "") for page in reader.pages]
-            text = "\n".join(parts)
-        elif suffix in {".docx", ".pptx"}:
+            segments = [
+                (f"page {index + 1}", page.extract_text() or "")
+                for index, page in enumerate(reader.pages)
+            ]
+        elif suffix == ".docx":
             if not raw.startswith(b"PK"):
                 raise ValueError("The uploaded Office document is invalid or unreadable.")
-            text = _xml_text(
-                raw,
-                ("word/document.xml",)
-                if suffix == ".docx"
-                else ("ppt/slides/", "ppt/notesSlides/"),
-            )
+            segments = [("document", _xml_text(raw, ("word/document.xml",)))]
+        elif suffix == ".pptx":
+            if not raw.startswith(b"PK"):
+                raise ValueError("The uploaded Office document is invalid or unreadable.")
+            segments = []
+            with ZipFile(BytesIO(raw)) as archive:
+                members = sorted(
+                    info.filename
+                    for info in archive.infolist()
+                    if info.filename.startswith("ppt/slides/slide")
+                    and info.filename.endswith(".xml")
+                )
+            for index, member in enumerate(members, start=1):
+                segments.append((f"slide {index}", _xml_text(raw, (member,))))
+            if not segments:
+                segments = [("presentation", _xml_text(raw, ("ppt/slides/", "ppt/notesSlides/")))]
         elif suffix in {".html", ".htm"}:
-            text = _clean_html(raw.decode("utf-8", errors="ignore"))
+            segments = [("html", _clean_html(raw.decode("utf-8", errors="ignore")))]
         else:
-            text = raw.decode("utf-8", errors="ignore")
+            segments = [("document", raw.decode("utf-8", errors="ignore"))]
     except ValueError:
         raise
     except Exception as exc:
         raise ValueError(f"Could not read the document: {type(exc).__name__}.") from exc
 
-    text = re.sub(r"\s+", " ", text).strip()
-    if len(text) < 80:
+    cleaned = []
+    total = 0
+    for source_ref, text in segments:
+        normalized = re.sub(r"\s+", " ", text).strip()
+        if normalized:
+            cleaned.append((source_ref, normalized))
+            total += len(normalized)
+
+    if total < 80:
         raise ValueError("The material does not contain enough readable text to build a useful learning set.")
-    return text
+    return cleaned
+
+
+def extract_text(filename: str, raw: bytes, mime_type: str = "") -> str:
+    return "\n".join(text for _source_ref, text in extract_segments(filename, raw, mime_type))
+
 
 
 def material_chunks(text: str, size: int = 1800, overlap: int = 250) -> list[str]:
@@ -136,6 +158,16 @@ def material_chunks(text: str, size: int = 1800, overlap: int = 250) -> list[str
             break
         start = max(end - overlap, start + 1)
     return chunks
+
+
+def material_chunk_records(segments: list[tuple[str, str]], size: int = 1800, overlap: int = 250) -> list[dict]:
+    records = []
+    index = 0
+    for source_ref, text in segments:
+        for piece in material_chunks(text, size=size, overlap=overlap):
+            records.append({"chunk_index": index, "source_ref": source_ref, "content": piece})
+            index += 1
+    return records
 
 
 def retrieve_material_context(text: str, query: str, limit: int = 24, max_chars: int = 50000) -> str:
