@@ -123,8 +123,7 @@ def run():
         for i in range(40)
     ]
     groups = choose_material_coverage_groups(fake_chunks, 10)
-    joined = "
-".join(groups)
+    joined = "\n".join(groups)
     assert len(groups) >= 2
     assert "FACT-0" in joined
     assert "FACT-39" in joined
