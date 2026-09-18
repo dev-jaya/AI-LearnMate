@@ -1109,7 +1109,6 @@ def tutor_context(
 
     context = {
         "learner_name": learner.name,
-        "gemini_interaction_id": conversation.gemini_interaction_id if "conversation" in locals() else None,
         "topic": topic,
         "mastery": mastery,
         "weak_topics": [
@@ -1267,6 +1266,7 @@ async def chat(req: ChatRequest, db: Session = Depends(get_db)):
         db,
         req.material_id,
     )
+    context["gemini_interaction_id"] = conversation.gemini_interaction_id or None
     history = (
         db.query(Message)
         .filter(Message.conversation_id == conversation.id)
