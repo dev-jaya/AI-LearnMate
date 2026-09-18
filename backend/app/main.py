@@ -2,6 +2,7 @@ from fastapi import FastAPI, Depends, HTTPException, UploadFile, File
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session
 from sqlalchemy import inspect, text
+from sqlalchemy.exc import IntegrityError
 import json
 import logging
 import math
@@ -117,6 +118,10 @@ def migrate_database():
         connection.execute(text(
             "CREATE UNIQUE INDEX IF NOT EXISTS uq_question_history_learner_fingerprint "
             "ON learner_question_history (learner_id, fingerprint)"
+        ))
+        connection.execute(text(
+            "CREATE UNIQUE INDEX IF NOT EXISTS uq_material_chunk_material_index "
+            "ON material_chunks (material_id, chunk_index)"
         ))
 
 
@@ -421,7 +426,14 @@ def store_questions(
             )
         )
 
-    db.commit()
+    try:
+        db.commit()
+    except IntegrityError as exc:
+        db.rollback()
+        raise HTTPException(
+            409,
+            "A duplicate question was detected while saving the quiz. Please regenerate.",
+        ) from exc
     db.refresh(quiz)
     return quiz
 
@@ -430,13 +442,11 @@ def _previous_questions(
     learner_id: int,
     topic: str,
     db: Session,
-    limit: int = 500,
 ) -> list[str]:
     rows = (
         db.query(GeneratedQuestion)
         .filter(GeneratedQuestion.learner_id == learner_id)
         .order_by(GeneratedQuestion.created_at.desc())
-        .limit(limit)
         .all()
     )
     return [row.question for row in rows]
@@ -919,28 +929,38 @@ def choose_material_coverage_groups(
     chunks: list[MaterialChunk],
     requested_count: int,
 ) -> list[str]:
-    """Partition the complete indexed document into coverage bands."""
+    """Create evenly distributed source groups across the complete indexed document."""
     if not chunks:
         return []
 
-    target_groups = min(max(requested_count, 4), 8, len(chunks))
-    groups = []
-    band_size = max(1, math.ceil(len(chunks) / target_groups))
+    region_count = min(max(requested_count, 4), 20, len(chunks))
+    group_count = min(max(math.ceil(region_count / 4), 2), 6)
 
-    for band_start in range(0, len(chunks), band_size):
-        band = chunks[band_start:band_start + band_size]
-        if not band:
-            continue
-        source = "\n\n".join(
-            f"[{item.source_ref} | chunk {item.chunk_index + 1}]\n{item.content}"
-            for item in band
-        )
-        # Keep each coverage request comfortably below the per-call material
-        # context budget while still representing every chunk in the band.
-        groups.append(source[:30000])
+    if region_count == 1:
+        anchors = [0]
+    else:
+        anchors = [
+            round(index * (len(chunks) - 1) / (region_count - 1))
+            for index in range(region_count)
+        ]
 
-    return groups[:target_groups]
+    groups: list[str] = []
+    for group_start in range(0, len(anchors), 4):
+        group_anchors = anchors[group_start:group_start + 4]
+        regions = []
+        for anchor in group_anchors:
+            left = max(0, anchor - 1)
+            right = min(len(chunks), anchor + 2)
+            region = chunks[left:right]
+            regions.append(
+                "\n".join(
+                    f"[{item.source_ref} | chunk {item.chunk_index + 1}]\n{item.content}"
+                    for item in region
+                )
+            )
+        groups.append("\n\n--- DOCUMENT REGION ---\n\n".join(regions))
 
+    return groups[:group_count]
 
 async def _generate_material_quiz(
     material: Material,
@@ -981,7 +1001,8 @@ async def _generate_material_quiz(
             if difficulty_plan
             else "medium"
         )
-        candidate_count = min(max(remaining, 2), 6)
+        groups_remaining = max(1, len(groups) - group_index)
+        candidate_count = min(max(math.ceil(remaining / groups_remaining) * 2, 4), 8)
         candidates = await provider.generate_material_questions(
             source_group,
             req.subject or req.topic or material.title,
@@ -1087,6 +1108,7 @@ def tutor_context(
     topic: str,
     db: Session,
     material_id: int | None = None,
+    query: str | None = None,
 ):
     learner = db.get(Learner, learner_id)
     if not learner:
@@ -1146,7 +1168,7 @@ def tutor_context(
         context["material_title"] = material.title
         context["material_context"] = retrieve_material_context(
             material.extracted_text,
-            topic or material.title,
+            query or topic or material.title,
         )
 
     return context
@@ -1272,8 +1294,8 @@ async def chat(req: ChatRequest, db: Session = Depends(get_db)):
         topic,
         db,
         req.material_id,
+        query=req.message,
     )
-    context["gemini_interaction_id"] = conversation.gemini_interaction_id or None
     history = (
         db.query(Message)
         .filter(Message.conversation_id == conversation.id)
@@ -1343,10 +1365,6 @@ async def chat(req: ChatRequest, db: Session = Depends(get_db)):
                 provider,
                 "Gemini did not return a usable assistant response.",
             )
-        interaction_id = getattr(provider, "last_interaction_id", None)
-        if interaction_id:
-            conversation.gemini_interaction_id = interaction_id
-
     assistant = Message(
         conversation_id=conversation.id,
         role="assistant",
