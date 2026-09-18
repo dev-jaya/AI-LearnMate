@@ -81,6 +81,9 @@ def validate_question(
     topic: str,
     subtopic: str,
     difficulty: str,
+    *,
+    source_text: str | None = None,
+    require_source_evidence: bool = False,
 ) -> dict[str, Any] | None:
     try:
         if not isinstance(raw, dict):
