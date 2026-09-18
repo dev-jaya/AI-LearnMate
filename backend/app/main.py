@@ -495,13 +495,13 @@ async def generate_quiz(req: QuizRequest, db: Session):
     }
 
     questions: list[dict] = []
-    for _ in range(4):
+    for _ in range(6):
         if len(questions) >= req.count:
             break
 
         remaining = req.count - len(questions)
         missing_plan = difficulty_plan[len(questions):]
-        request_count = min(max(remaining * 2, 6), 20)
+        request_count = min(max(remaining * 3, 10), 20)
 
         candidates = await provider.generate_questions(
             req.subject or req.topic,
@@ -1336,6 +1336,9 @@ async def chat(req: ChatRequest, db: Session = Depends(get_db)):
                 provider,
                 "Gemini did not return a usable assistant response.",
             )
+        interaction_id = getattr(provider, "last_interaction_id", None)
+        if interaction_id:
+            conversation.gemini_interaction_id = interaction_id
 
     assistant = Message(
         conversation_id=conversation.id,
