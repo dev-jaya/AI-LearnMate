@@ -143,7 +143,7 @@ def validate_question(
             generated_difficulty = requested_difficulty
 
         normalized = _normalize(question)
-        return {
+        result = {
             "subject": str(subject or raw.get("subject") or "General").strip(),
             "topic": str(topic or raw.get("topic") or "General").strip(),
             "subtopic": str(subtopic or raw.get("subtopic") or "General").strip(),
@@ -159,6 +159,7 @@ def validate_question(
         }
         if source_evidence:
             result["source_evidence"] = source_evidence
+        return result
     except (TypeError, ValueError):
         return None
 
