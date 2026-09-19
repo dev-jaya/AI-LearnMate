@@ -481,12 +481,11 @@ def _previous_questions(
     subject: str,
     db: Session,
 ) -> list[str]:
+    # Keep questions unique for the learner across subjects; the subject argument
+    # is retained for the caller's explicit subject-driven generation contract.
     rows = (
         db.query(GeneratedQuestion)
-        .filter(
-            GeneratedQuestion.learner_id == learner_id,
-            GeneratedQuestion.subject == subject,
-        )
+        .filter(GeneratedQuestion.learner_id == learner_id)
         .order_by(GeneratedQuestion.created_at.desc())
         .all()
     )
