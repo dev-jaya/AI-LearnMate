@@ -80,19 +80,34 @@ def main():
     assert status == 200 and 'id="root"' in html
     print("PASS frontend HTTP 200")
 
-    print("4/13 creating smoke learner...")
+    print("4/13 checking complete subject catalog...")
+    catalog = json_request("GET", "/api/subjects")
+    expected_subjects = {
+        "C", "C++", "Java", "Python", "Data Structures", "Algorithms",
+        "DBMS", "SQL", "Operating Systems", "Computer Networks",
+        "Digital Logic", "Computer Organization", "Discrete Mathematics",
+        "Mathematics", "Software Engineering", "Web Development",
+        "Artificial Intelligence", "Machine Learning", "Cybersecurity",
+        "Cloud Computing",
+    }
+    actual_subjects = {item["name"] for item in catalog.get("subjects", [])}
+    assert catalog.get("count") == len(expected_subjects)
+    assert actual_subjects == expected_subjects
+    print("PASS all 20 subjects are exposed to the frontend")
+
+    print("5/13 creating smoke learner...")
     learner = json_request("POST", "/api/learners", {"name": "Production Smoke"})
     learner_id = learner["id"]
     print("PASS learner", learner_id)
 
-    print("5/13 real Gemini chat: Hi")
+    print("6/13 real Gemini chat: Hi")
     first = json_request("POST", "/api/chat", {"learner_id": learner_id, "message": "Hi", "topic": "Java"})
     reply1 = first["message"]["content"]
     assert reply1.strip() and "could not reach the AI assistant" not in reply1.lower()
     conversation_id = first["conversation_id"]
     print("PASS", reply1[:180].replace("\n", " "))
 
-    print("6/13 real Gemini chat: 2 + 3")
+    print("8/13 real Gemini chat: 2 + 3")
     second = json_request("POST", "/api/chat", {"learner_id": learner_id, "message": "What is 2 + 3?", "topic": "Mathematics", "conversation_id": conversation_id})
     reply2 = second["message"]["content"]
     assert re.search(r"\b5\b", reply2), reply2
