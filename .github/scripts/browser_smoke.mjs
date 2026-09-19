@@ -15,6 +15,14 @@ try {
   const chat = page.getByPlaceholder(/Message AI LearnMate/i);
   await chat.waitFor({ state: "visible", timeout: 30000 });
 
+  const subjectSelect = page.getByRole("combobox", { name: /Select subject for MCQ generation/i });
+  const subjectOptions = await subjectSelect.locator("option").evaluateAll(options => options.map(option => option.textContent?.trim()).filter(Boolean));
+  const expectedSubjects = ["C", "C++", "Java", "Python", "Data Structures", "Algorithms", "DBMS", "SQL", "Operating Systems", "Computer Networks", "Digital Logic", "Computer Organization", "Discrete Mathematics", "Mathematics", "Software Engineering", "Web Development", "Artificial Intelligence", "Machine Learning", "Cybersecurity", "Cloud Computing"];
+  if (subjectOptions.length !== expectedSubjects.length || expectedSubjects.some(subject => !subjectOptions.includes(subject))) {
+    throw new Error("Frontend subject selector is incomplete: " + JSON.stringify(subjectOptions));
+  }
+  console.log("SUBJECT SELECTOR PASSED:", subjectOptions.length, "subjects");
+
   await chat.fill("Hi");
   await page.getByTitle("Send message").click();
   await page.locator(".chat-messages .message.assistant:not(.typing)").last().waitFor({ state: "visible", timeout: 90000 });
