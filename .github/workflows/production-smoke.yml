@@ -23,6 +23,10 @@ jobs:
 
   production-browser:
     needs: production-api
+    if: >-
+      ${{ always() &&
+          github.event.workflow_run.conclusion == 'success' &&
+          github.event.workflow_run.head_branch == 'main' }}
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
