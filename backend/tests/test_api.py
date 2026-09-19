@@ -18,7 +18,13 @@ class FakeProvider:
     async def generate_questions(self,subject,topic,subtopic,difficulty,count,context): return self._questions(subject,topic,difficulty,count)
     async def generate_material_questions(self,material_text,subject,topic,difficulty,count,excluded_questions,source_reference="document"): return self._questions(subject,topic,difficulty,count)
     def _questions(self,subject,topic,difficulty,count):
-        return [{"id":f"test-{i}","subject":subject,"topic":topic,"subtopic":"Material-based","difficulty":difficulty,"question":f"What does the material explain in question {i}?","options":["The first concept","The second concept","The third concept","The fourth concept"],"answer":0,"correct_answer":0,"explanation":"The answer is stated in the supplied material.","source_evidence":"Binary search works on sorted data by repeatedly checking the middle element","fingerprint":f"test-fingerprint-{i}-{uuid4().hex}","question_type":"conceptual","provider":"gemini"} for i in range(count)]
+        templates = (
+            f"Which statement about {subject} is correct when learning its fundamentals?",
+            f"A student is practicing {subject}. Which scenario represents a valid application?",
+            f"For an exam question on {subject}, which choice gives the relevant principle?",
+            f"While debugging {subject}, which observation best matches the concept?",
+        )
+        return [{"id":f"test-{i}","subject":subject,"topic":topic,"subtopic":"Material-based","difficulty":difficulty,"question":templates[i % len(templates)],"options":["The first concept","The second concept","The third concept","The fourth concept"],"answer":0,"correct_answer":0,"explanation":"The answer is stated in the supplied material.","source_evidence":"Binary search works on sorted data by repeatedly checking the middle element","fingerprint":f"test-fingerprint-{i}-{uuid4().hex}","question_type":"conceptual","provider":"gemini"} for i in range(count)]
 
 
 def _new_learner(db,prefix):
@@ -34,19 +40,19 @@ def test_all_subjects_are_exposed_and_generate_mcqs(monkeypatch):
         assert catalog["count"] == len(main.SUBJECTS)
         assert set(names) == set(main.SUBJECTS)
 
-        learner = _new_learner(db, "CI-AllSubjects")
         for subject in main.SUBJECTS:
+            learner = _new_learner(db, "CI-AllSubjects")
             quiz = asyncio.run(main.generate_quiz(
                 QuizRequest(
                     learner_id=learner.id,
                     topic=subject,
                     subject=subject,
                     difficulty="easy",
-                    count=1,
+                    count=3,
                 ),
                 db,
             ))
-            assert len(quiz["questions"]) == 1
+            assert len(quiz["questions"]) == 3
             assert all(question["subject"] == subject for question in quiz["questions"])
             assert all(len(question["options"]) == 4 for question in quiz["questions"])
 
