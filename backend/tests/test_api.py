@@ -25,6 +25,32 @@ def _new_learner(db,prefix):
     learner=Learner(name=f"{prefix}-{uuid4().hex[:8]}"); db.add(learner); db.commit(); db.refresh(learner); return learner
 
 
+def test_all_subjects_are_exposed_and_generate_mcqs(monkeypatch):
+    monkeypatch.setattr(main, "get_provider", lambda: FakeProvider())
+    payload = main.subjects
+    with Session(bind=main.engine) as db:
+        catalog = payload(db)
+        names = [item["name"] for item in catalog["subjects"]]
+        assert catalog["count"] == len(main.SUBJECTS)
+        assert set(names) == set(main.SUBJECTS)
+
+        learner = _new_learner(db, "CI-AllSubjects")
+        for subject in main.SUBJECTS:
+            quiz = asyncio.run(main.generate_quiz(
+                QuizRequest(
+                    learner_id=learner.id,
+                    topic=subject,
+                    subject=subject,
+                    difficulty="easy",
+                    count=3,
+                ),
+                db,
+            ))
+            assert len(quiz["questions"]) == 3
+            assert all(question["subject"] == subject for question in quiz["questions"])
+            assert all(len(question["options"]) == 4 for question in quiz["questions"])
+
+
 def test_chat_history_is_saved_and_reloadable(monkeypatch):
     monkeypatch.setattr(main,"get_provider",lambda:FakeProvider())
     with Session(bind=main.engine) as db:
