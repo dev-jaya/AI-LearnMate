@@ -107,7 +107,7 @@ def main():
     conversation_id = first["conversation_id"]
     print("PASS", reply1[:180].replace("\n", " "))
 
-    print("8/13 real Gemini chat: 2 + 3")
+    print("7/13 real Gemini chat: 2 + 3")
     second = json_request("POST", "/api/chat", {"learner_id": learner_id, "message": "What is 2 + 3?", "topic": "Mathematics", "conversation_id": conversation_id})
     reply2 = second["message"]["content"]
     assert re.search(r"\b5\b", reply2), reply2
