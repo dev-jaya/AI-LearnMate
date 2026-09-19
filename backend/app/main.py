@@ -255,6 +255,15 @@ def topics(db: Session = Depends(get_db)):
     }
 
 
+@app.get("/api/subjects")
+def subjects(db: Session = Depends(get_db)):
+    payload = topics(db)
+    return {
+        "subjects": payload["subjects"],
+        "count": len(payload["subjects"]),
+    }
+
+
 def learner_mastery(learner_id: int, db: Session):
     attempts = (
         db.query(Attempt)
@@ -299,7 +308,7 @@ def adaptive_difficulty_plan(score: float | None, count: int) -> list[str]:
 
 
 def infer_subject(message: str, default: str) -> str:
-    """Match an explicitly named subject without C matching arbitrary English words."""
+    """Match an explicitly named supported subject."""
     lower = message.casefold()
     for subject in sorted(SUBJECTS, key=len, reverse=True):
         if subject == "C":
@@ -310,7 +319,16 @@ def infer_subject(message: str, default: str) -> str:
             pattern = rf"(?<!\w){re.escape(subject.casefold())}(?!\w)"
         if re.search(pattern, lower):
             return subject
-    return default
+    return default.strip() or "General"
+
+
+def normalize_subject(value: str | None, fallback: str) -> str:
+    """Resolve subject names case-insensitively to the supported catalog."""
+    requested = (value or fallback or "").strip()
+    for subject in SUBJECTS:
+        if requested.casefold() == subject.casefold():
+            return subject
+    return requested or fallback.strip() or SUBJECTS[0]
 
 
 def safe_gemini_failure(provider, default_message: str) -> HTTPException:
@@ -460,12 +478,15 @@ def store_questions(
 
 def _previous_questions(
     learner_id: int,
-    topic: str,
+    subject: str,
     db: Session,
 ) -> list[str]:
     rows = (
         db.query(GeneratedQuestion)
-        .filter(GeneratedQuestion.learner_id == learner_id)
+        .filter(
+            GeneratedQuestion.learner_id == learner_id,
+            GeneratedQuestion.subject == subject,
+        )
         .order_by(GeneratedQuestion.created_at.desc())
         .all()
     )
@@ -498,8 +519,11 @@ async def generate_quiz(req: QuizRequest, db: Session):
     if not db.get(Learner, req.learner_id):
         raise HTTPException(404, "Learner not found")
 
+    subject = normalize_subject(req.subject, req.topic)
+    topic = (req.topic or subject).strip() or subject
+
     mastery = learner_mastery(req.learner_id, db)
-    score = mastery.get(req.topic)
+    score = mastery.get(topic)
     requested_difficulty = req.difficulty
 
     if requested_difficulty == "adaptive":
@@ -509,7 +533,7 @@ async def generate_quiz(req: QuizRequest, db: Session):
         difficulty_plan = [requested_difficulty] * req.count
         generation_difficulty = requested_difficulty
 
-    previous = _previous_questions(req.learner_id, req.topic, db)
+    previous = _previous_questions(req.learner_id, subject, db)
     provider = get_provider()
 
     if not provider.api_key:
@@ -537,8 +561,8 @@ async def generate_quiz(req: QuizRequest, db: Session):
         request_count = min(max(remaining * 3, 10), 20)
 
         candidates = await provider.generate_questions(
-            req.subject or req.topic,
-            req.topic,
+            subject,
+            topic,
             req.subtopic,
             generation_difficulty,
             request_count,
@@ -593,12 +617,12 @@ async def generate_quiz(req: QuizRequest, db: Session):
         db,
         req.learner_id,
         questions,
-        req.topic,
+        topic,
         "adaptive" if requested_difficulty == "adaptive" else generation_difficulty,
     )
     return {
         "id": quiz.id,
-        "topic": req.topic,
+        "topic": topic,
         "difficulty": "adaptive" if requested_difficulty == "adaptive" else generation_difficulty,
         "questions": questions,
     }
@@ -1347,7 +1371,7 @@ async def chat(req: ChatRequest, db: Session = Depends(get_db)):
     if quiz_intent:
         match = re.search(r"\b(\d+)\b", lower)
         count = min(max(int(match.group(1)) if match else 5, 3), 20)
-        selected = infer_subject(req.message, topic)
+        selected = normalize_subject(infer_subject(req.message, topic), topic)
         difficulty = (
             "hard"
             if "hard" in lower
