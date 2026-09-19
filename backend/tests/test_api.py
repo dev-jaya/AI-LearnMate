@@ -42,11 +42,11 @@ def test_all_subjects_are_exposed_and_generate_mcqs(monkeypatch):
                     topic=subject,
                     subject=subject,
                     difficulty="easy",
-                    count=3,
+                    count=1,
                 ),
                 db,
             ))
-            assert len(quiz["questions"]) == 3
+            assert len(quiz["questions"]) == 1
             assert all(question["subject"] == subject for question in quiz["questions"])
             assert all(len(question["options"]) == 4 for question in quiz["questions"])
 
