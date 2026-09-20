@@ -1,0 +1,50 @@
+name: Bootstrap stateless repaired source
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - ".github/repair/**"
+      - ".github/workflows/bootstrap-repair.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Restore repaired project
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ ! -f .github/repair/chunk_00 ]]; then
+            echo "Repair archive chunks are absent; nothing to apply."
+            exit 0
+          fi
+          cat .github/repair/chunk_* > /tmp/ai-learnmate.b64
+          base64 --decode /tmp/ai-learnmate.b64 > /tmp/ai-learnmate.tar.xz
+          mkdir -p /tmp/repaired
+          tar -xJf /tmp/ai-learnmate.tar.xz -C /tmp/repaired
+          test -d /tmp/repaired/AI-LearnMate-main
+          find . -mindepth 1 -maxdepth 1 ! -name .git -exec rm -rf {} +
+          cp -a /tmp/repaired/AI-LearnMate-main/. .
+          git status --short
+
+      - name: Commit repaired source
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          if git diff --cached --quiet; then
+            echo "No changes to commit."
+            exit 0
+          fi
+          git commit -m "feat: convert AI LearnMate to stateless production architecture"
+          git push
